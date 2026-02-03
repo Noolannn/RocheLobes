@@ -10,7 +10,7 @@ epsilon = 1e-7
 size    = 2
 
 # Physical parameters
-# M=1, a=1, 
+# M=1, a=1
 M = 1
 q = 0.25
 a = 1
@@ -170,4 +170,67 @@ if __name__ == "__main__":
             rf'$x(L_3)={xL3:.8f}$',
             fontsize=10, ha='left', va='top')
 
+    plt.show()
+
+
+    xL4,xL5 = mu-1/2, mu-1/2
+    yL4,yL5 = np.sqrt(3)/2, -np.sqrt(3)/2
+    RP_L1 = roche_potential(xL1, 0)
+    RP_L2 = roche_potential(xL2, 0)
+    RP_L3 = roche_potential(xL3, 0)
+    RP_L4 = roche_potential(xL4, yL4)
+    RP_L5 = roche_potential(xL5, yL5)
+    fig4, ax4 = plt.subplots(figsize=(10, 10), dpi=300)
+    ax4.set_aspect('equal')
+    ax4.set_xticks([])
+    ax4.set_yticks([])
+    ax4.set_frame_on(False)
+
+    ax4.set_xlim(-1.5, 1.5)
+    ax4.set_ylim(-1.5, 1.5)
+
+    RP_Ls = np.array([RP_L1, RP_L2, RP_L3, RP_L4, RP_L5])
+    RP_Ls = np.unique(RP_Ls)
+    RP_Ls.sort()
+
+    CS_base = ax4.contour(
+        X, Y, Z,
+        levels=levels,
+        colors='black',
+        linewidths=0.4
+    )
+    CS_Ls = ax4.contour(
+        X, Y, Z,
+        levels=RP_Ls.tolist(),
+        colors='black',
+        linewidths=2.0
+    )
+
+    Rmask = np.sqrt(X**2 + Y**2)
+
+    mask = Rmask > 1.4
+
+    Z_masked = np.ma.array(Z, mask=mask)
+    CS_L1 = ax4.contour(
+        X, Y, Z_masked,
+        levels=[RP_L1],
+        colors='black',
+        linewidths=4.0
+    )
+
+    ax4.plot(0, 0, 'k+', ms=10)      # CM
+    ax4.plot(a1, 0, 'ko', ms=5)     # M1
+    ax4.plot(a2, 0, 'ko', ms=5)     # M2
+    ax4.text(a1+0.01, -0.01, r'$M_1$', color='k', fontsize=10,
+            va='top', ha='left')
+    ax4.text(a2+0.01, -0.01, r'$M_2$', color='k', fontsize=10,
+            va='top', ha='left')
+
+    ax4.plot(xL1, 0, 'r^', ms=6); ax4.text(xL1+0.03, 0.02, r'$L_1$', fontsize=11, color='r')
+    ax4.plot(xL2, 0, 'r^', ms=6); ax4.text(xL2-0.10, 0.02, r'$L_2$', fontsize=11, color='r')
+    ax4.plot(xL3, 0, 'r^', ms=6); ax4.text(xL3+0.03, 0.02, r'$L_3$', fontsize=11, color='r')
+    ax4.plot(xL4, yL4, 'r^', ms=6); ax4.text(xL4+0.03, yL4+0.03, r'$L_4$', fontsize=11, color='r')
+    ax4.plot(xL5, yL5, 'r^', ms=6); ax4.text(xL5+0.03, yL5-0.08, r'$L_5$', fontsize=11, color='r')
+
+    ax4.set_title(rf"Roche equipotentials with Lagrange points ($q={q}$)")
     plt.show()
