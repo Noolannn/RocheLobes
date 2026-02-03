@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-
+from skimage import measure
 # Physical constant
 G = 1
 
@@ -28,6 +28,19 @@ def roche_potential(X, Y):
     R = np.sqrt(X**2 + Y**2)
     R1 = np.sqrt((X - a1)**2 + Y**2)
     R2 = np.sqrt((X - a2)**2 + Y**2)
+    R1_eff = np.where(R1 < epsilon, epsilon, R1)
+    R2_eff = np.where(R2 < epsilon, epsilon, R2)
+    # Adds epsilon to avoid the singularity at the star position
+    Phi1 = - (G * M1)/R1_eff
+    Phi2 = - (G * M2)/R2_eff
+    PhiC = (1/2) * (Omega**2) * (R**2)
+    PhiRoche = Phi1 + Phi2 - PhiC
+    return PhiRoche
+
+def roche_potential_3D(X, Y, Z):
+    R = np.sqrt(X**2 + Y**2)
+    R1 = np.sqrt((X - a1)**2 + Y**2 + Z**2)
+    R2 = np.sqrt((X - a2)**2 + Y**2 + Z**2)
     R1_eff = np.where(R1 < epsilon, epsilon, R1)
     R2_eff = np.where(R2 < epsilon, epsilon, R2)
     # Adds epsilon to avoid the singularity at the star position
@@ -73,8 +86,8 @@ if __name__ == "__main__":
     ax.set_frame_on(False)
     zmin, zmax = np.percentile(Z, [30, 100])
     levels = np.linspace(zmin, zmax, 30)
-    print(Z.min())
-    print(Z.max())
+    #print(Z.min())
+    #print(Z.max())
     #levels = np.linspace(zmin, zmax, 100)
     #ax.scatter(0, 0, s=60, marker=".")
     #ax.scatter(a1, 0, s=60, marker=(5, 1))
@@ -91,6 +104,10 @@ if __name__ == "__main__":
         colors='black',
         linewidths=0.4
     )
+    ax.text(a1+0.01, -0.01, r'$M_1$', color='k', fontsize=10,
+         va='top', ha='left')
+    ax.text(a2+0.01, -0.01, r'$M_2$', color='k', fontsize=10,
+         va='top', ha='left')
     ax.set_title("Roche equipotentials for q=" + str(q))
     plt.show()
 
@@ -123,7 +140,7 @@ if __name__ == "__main__":
     roots += [bisect_root(lambda x: f(x, mu), mu-1+eps, mu-eps)]
     roots += [bisect_root(lambda x: f(x, mu), mu+eps, xmax)]
 
-    print("Roots (x):", roots)
+    #print("Roots (x):", roots)
 
     xL2 = [r for r in roots if r < mu-1][0]  
     xL1 = [r for r in roots if mu-1 < r < mu][0] 
@@ -233,4 +250,38 @@ if __name__ == "__main__":
     ax4.plot(xL5, yL5, 'r^', ms=6); ax4.text(xL5+0.03, yL5-0.08, r'$L_5$', fontsize=11, color='r')
 
     ax4.set_title(rf"Roche equipotentials with Lagrange points ($q={q}$)")
+    plt.show()
+
+    x5, y5, z5 = 1.1* np.mgrid[-1:1:31j, -1:1:31j, -1:1:31j]
+    vol = roche_potential_3D(x5, y5, z5)
+
+    dx5 = x5[1,0,0] - x5[0,0,0]
+    dy5 = y5[0,1,0] - y5[0,0,0]
+    dz5 = z5[0,0,1] - z5[0,0,0]
+
+    iso_val = roche_potential_3D(-0.43807595845641933, 0, 0)
+    verts, faces, normals, values = measure.marching_cubes(
+        vol, level=iso_val, spacing = (dx5, dy5, dz5)
+    )
+
+    verts_phys = verts.copy()
+    verts_phys[:, 0] += x5.min()
+    verts_phys[:, 1] += y5.min()
+    verts_phys[:, 2] += z5.min()
+
+    fig5 = plt.figure(figsize=(10, 6), dpi=300)
+    ax5 = fig5.add_subplot(111, projection='3d')
+
+    ax5.plot_trisurf(
+        verts_phys[:, 0], verts_phys[:, 1], verts_phys[:, 2],
+        triangles=faces,
+        cmap='Spectral',
+        linewidth=0.2
+    )
+    ax5.set_box_aspect((2, 1, 1)) 
+    ax5.set_xlabel('x')
+    ax5.set_ylabel('y')
+    ax5.set_zlabel('z')
+    ax5.set_title(rf"Roche lobe ($q={q}$)")
+    ax5.view_init(elev=30, azim=-60)
     plt.show()
