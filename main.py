@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from skimage import measure
+
+q = 0.25
+
 # Physical constant
 G = 1
 
@@ -12,19 +15,16 @@ size    = 2
 # Physical parameters
 # M=1, a=1
 M = 1
-q = 0.25
 a = 1
 Omega = np.sqrt(G*M/a**3)
 
-# Constraint physical parameters: mass and orbital radii of two stars
-M1 = M/(1 + q)
-M2 = M - M1
-a2 = a/(1+q)
-a1 = a - a2
-a1 = a1
-a2 = -a2
-
-def roche_potential(X, Y):
+def roche_potential(X, Y, q):
+    M1 = M/(1 + q)
+    M2 = M - M1
+    a2 = a/(1+q)
+    a1 = a - a2
+    a1 = a1
+    a2 = -a2
     R = np.sqrt(X**2 + Y**2)
     R1 = np.sqrt((X - a1)**2 + Y**2)
     R2 = np.sqrt((X - a2)**2 + Y**2)
@@ -37,7 +37,13 @@ def roche_potential(X, Y):
     PhiRoche = Phi1 + Phi2 - PhiC
     return PhiRoche
 
-def roche_potential_3D(X, Y, Z):
+def roche_potential_3D(X, Y, Z, q):
+    M1 = M/(1 + q)
+    M2 = M - M1
+    a2 = a/(1+q)
+    a1 = a - a2
+    a1 = a1
+    a2 = -a2
     R = np.sqrt(X**2 + Y**2)
     R1 = np.sqrt((X - a1)**2 + Y**2 + Z**2)
     R2 = np.sqrt((X - a2)**2 + Y**2 + Z**2)
@@ -74,11 +80,106 @@ def bisect_root(func, a, b, err=1e-8):
             a, fa = m, fm
     return 0.5*(a+b)
 
+def keep_smallest_component(faces):
+    # faces: (M,3) triangles index into verts
+    M = faces.shape[0]
+
+    # 建立“共享边 -> 相邻三角形”的图
+    edge2tris = {}
+    for t, (a,b,c) in enumerate(faces):
+        edges = [(a,b),(b,c),(c,a)]
+        for u,v in edges:
+            if u > v: u, v = v, u
+            edge2tris.setdefault((u,v), []).append(t)
+
+    adj = [[] for _ in range(M)]
+    for tris in edge2tris.values():
+        if len(tris) == 2:
+            t1, t2 = tris
+            adj[t1].append(t2)
+            adj[t2].append(t1)
+
+    # BFS/DFS 找连通分量
+    comp_id = -np.ones(M, dtype=int)
+    comp_sizes = []
+    cid = 0
+    for i in range(M):
+        if comp_id[i] != -1: 
+            continue
+        stack = [i]
+        comp_id[i] = cid
+        size = 0
+        while stack:
+            t = stack.pop()
+            size += 1
+            for nb in adj[t]:
+                if comp_id[nb] == -1:
+                    comp_id[nb] = cid
+                    stack.append(nb)
+        comp_sizes.append(size)
+        cid += 1
+
+    # 选最小的连通分量
+    smallest = int(np.argmin(comp_sizes))
+    keep = (comp_id == smallest)
+    return faces[keep]
+
+def roche_lobe_plot(q):
+    mu=q/(1+q)
+    print("mu:", mu)
+    x_L1_q = bisect_root(lambda x: f(x, mu), mu-1+1e-6, mu-1e-6)
+    print("xL1:", x_L1_q)
+    
+    
+    x5, y5, z5 = 2* np.mgrid[-1:1:201j, -1:1:201j, -1:1:201j]
+    vol = roche_potential_3D(x5, y5, z5, q)
+
+    dx5 = x5[1,0,0] - x5[0,0,0]
+    dy5 = y5[0,1,0] - y5[0,0,0]
+    dz5 = z5[0,0,1] - z5[0,0,0]
+
+    iso_val = roche_potential_3D(x_L1_q, 0, 0, q)
+    verts, faces, normals, values = measure.marching_cubes(
+        vol, level=iso_val, spacing = (dx5, dy5, dz5)
+    )
+
+    verts_phys = verts.copy()
+    verts_phys[:, 0] += x5.min()
+    verts_phys[:, 1] += y5.min()
+    verts_phys[:, 2] += z5.min()
+
+    fig5 = plt.figure(figsize=(10, 6), dpi=300)
+    ax5 = fig5.add_subplot(111, projection='3d')
+
+    faces_lobe = keep_smallest_component(faces)
+
+    ax5.plot_trisurf(
+        verts_phys[:, 0], verts_phys[:, 1], verts_phys[:, 2],
+        triangles=faces_lobe,
+        cmap='Spectral',
+        linewidth=0.2
+    )
+    ax5.set_box_aspect((2, 1, 1)) 
+    ax5.set_xlabel('x')
+    ax5.set_ylabel('y')
+    ax5.set_zlabel('z')
+    ax5.set_xlim(-1.2,1.2)
+    ax5.set_ylim(-0.5,0.5)
+    ax5.set_zlim(-0.5,0.5)
+    ax5.set_title(rf"Roche lobe ($q={q:.3f}$)")
+    ax5.view_init(elev=30, azim=-90)
+    plt.show()
+
 if __name__ == "__main__":
+    a2 = a/(1+q)
+    a1 = a - a2
+    a1 = a1
+    a2 = -a2
     x = np.arange(-size, size, delta)
     y = np.arange(-size, size, delta)
     X, Y = np.meshgrid(x, y)
-    Z = roche_potential(X, Y)
+    Z = roche_potential(X, Y, q)
+
     fig, ax = plt.subplots(figsize=(10, 10), dpi=300)
     ax.set_aspect('equal')
     ax.set_xticks([])
@@ -86,8 +187,8 @@ if __name__ == "__main__":
     ax.set_frame_on(False)
     zmin, zmax = np.percentile(Z, [30, 100])
     levels = np.linspace(zmin, zmax, 30)
-    #print(Z.min())
-    #print(Z.max())
+    print(Z.min())
+    print(Z.max())
     #levels = np.linspace(zmin, zmax, 100)
     #ax.scatter(0, 0, s=60, marker=".")
     #ax.scatter(a1, 0, s=60, marker=(5, 1))
@@ -104,12 +205,15 @@ if __name__ == "__main__":
         colors='black',
         linewidths=0.4
     )
+
     ax.text(a1+0.01, -0.01, r'$M_1$', color='k', fontsize=10,
-         va='top', ha='left')
+            va='top', ha='left')
     ax.text(a2+0.01, -0.01, r'$M_2$', color='k', fontsize=10,
-         va='top', ha='left')
+            va='top', ha='left')
+
     ax.set_title("Roche equipotentials for q=" + str(q))
     plt.show()
+
 
     Zplot = np.clip(Z, np.percentile(Z, 0.8), np.percentile(Z, 100))
     fig2 = plt.figure(figsize=(10, 7), dpi=300)
@@ -148,9 +252,9 @@ if __name__ == "__main__":
 
     fig3, ax3 = plt.subplots(figsize=(10, 6), dpi=300)
 
-    ax3.plot(xs1, f(xs1), 'b', lw=1)
-    ax3.plot(xs2, f(xs2), 'r', lw=1)
-    ax3.plot(xs3, f(xs3), 'g', lw=1)
+    ax3.plot(xs1, f(xs1,mu), 'b', lw=1)
+    ax3.plot(xs2, f(xs2,mu), 'r', lw=1)
+    ax3.plot(xs3, f(xs3,mu), 'g', lw=1)
 
     ax3.axhline(0, color='gray', lw=0.8)
     ax3.axvline(mu-1, color='gray', lw=0.8, ls='--')
@@ -170,15 +274,15 @@ if __name__ == "__main__":
     ax3.plot(a2, 0, 'ko', ms=5)      # M2
 
     # Lagrange points
-    ax3.plot(xL2, f(xL2), 'b^', ms=5)
-    ax3.plot(xL1, f(xL1), 'r^', ms=5)
-    ax3.plot(xL3, f(xL3), 'g^', ms=5)
+    ax3.plot(xL2, f(xL2, mu), 'b^', ms=5)
+    ax3.plot(xL1, f(xL1, mu), 'r^', ms=5)
+    ax3.plot(xL3, f(xL3, mu), 'g^', ms=5)
 
-    ax3.text(xL2+0.01, f(xL2)-0.3, ' L2', color='b', fontsize=10,
+    ax3.text(xL2+0.01, f(xL2, mu)-0.3, ' L2', color='b', fontsize=10,
             va='top', ha='left')
-    ax3.text(xL1+0.01, f(xL1)-0.3, ' L1', color='r', fontsize=10,
+    ax3.text(xL1+0.01, f(xL1, mu)-0.3, ' L1', color='r', fontsize=10,
             va='top', ha='left')
-    ax3.text(xL3+0.01, f(xL3)-0.3, ' L3', color='g', fontsize=10,
+    ax3.text(xL3+0.01, f(xL3, mu)-0.3, ' L3', color='g', fontsize=10,
             va='top', ha='left')
 
     ax3.text(-2, -2.5,
@@ -190,13 +294,14 @@ if __name__ == "__main__":
     plt.show()
 
 
+
     xL4,xL5 = mu-1/2, mu-1/2
     yL4,yL5 = np.sqrt(3)/2, -np.sqrt(3)/2
-    RP_L1 = roche_potential(xL1, 0)
-    RP_L2 = roche_potential(xL2, 0)
-    RP_L3 = roche_potential(xL3, 0)
-    RP_L4 = roche_potential(xL4, yL4)
-    RP_L5 = roche_potential(xL5, yL5)
+    RP_L1 = roche_potential(xL1, 0, q)
+    RP_L2 = roche_potential(xL2, 0, q)
+    RP_L3 = roche_potential(xL3, 0, q)
+    RP_L4 = roche_potential(xL4, yL4, q)
+    RP_L5 = roche_potential(xL5, yL5, q)
     fig4, ax4 = plt.subplots(figsize=(10, 10), dpi=300)
     ax4.set_aspect('equal')
     ax4.set_xticks([])
@@ -252,14 +357,14 @@ if __name__ == "__main__":
     ax4.set_title(rf"Roche equipotentials with Lagrange points ($q={q}$)")
     plt.show()
 
-    x5, y5, z5 = 1.1* np.mgrid[-1:1:31j, -1:1:31j, -1:1:31j]
-    vol = roche_potential_3D(x5, y5, z5)
+    x5, y5, z5 = 1.1* np.mgrid[-1:1:101j, -1:1:101j, -1:1:101j]
+    vol = roche_potential_3D(x5, y5, z5, q)
 
     dx5 = x5[1,0,0] - x5[0,0,0]
     dy5 = y5[0,1,0] - y5[0,0,0]
     dz5 = z5[0,0,1] - z5[0,0,0]
 
-    iso_val = roche_potential_3D(-0.43807595845641933, 0, 0)
+    iso_val = RP_L1
     verts, faces, normals, values = measure.marching_cubes(
         vol, level=iso_val, spacing = (dx5, dy5, dz5)
     )
@@ -269,19 +374,4 @@ if __name__ == "__main__":
     verts_phys[:, 1] += y5.min()
     verts_phys[:, 2] += z5.min()
 
-    fig5 = plt.figure(figsize=(10, 6), dpi=300)
-    ax5 = fig5.add_subplot(111, projection='3d')
-
-    ax5.plot_trisurf(
-        verts_phys[:, 0], verts_phys[:, 1], verts_phys[:, 2],
-        triangles=faces,
-        cmap='Spectral',
-        linewidth=0.2
-    )
-    ax5.set_box_aspect((2, 1, 1)) 
-    ax5.set_xlabel('x')
-    ax5.set_ylabel('y')
-    ax5.set_zlabel('z')
-    ax5.set_title(rf"Roche lobe ($q={q}$)")
-    ax5.view_init(elev=30, azim=-60)
-    plt.show()
+    roche_lobe_plot(q)
