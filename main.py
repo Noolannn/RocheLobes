@@ -95,8 +95,18 @@ def newton_method(x0, y0, step):
 
     return newton_method(x_new, y_new, step-1)
 
-# Uses Euler method
-def test_particule(x0, y0, vx0, vy0, duration, dt):
+def test_particule_euler(x0, y0, vx0, vy0, duration, dt):
+    """
+    Uses Euler method to compute the trajectory of a particule
+    
+    :param x0: Starting position x
+    :param y0: Starting position y
+    :param vx0: Starting velocity vx
+    :param vy0: Starting velocity vy
+    :param duration: Duration of the trajectory for the particule
+    :param dt: Timestep (the smaller, the more precise)
+    :returns: Position list along the trajectory
+    """
     n = int(duration/dt) # Number of iterations
     x = x0
     y = y0
@@ -120,6 +130,18 @@ def test_particule(x0, y0, vx0, vy0, duration, dt):
     
 # Uses RK4 method (smaller error)
 def test_particule_RK4(x0, y0, vx0, vy0, duration, dt):
+    """
+    Uses RK4 method (Runge-Kutta order 4) to compute the trajectory of a particule.
+    It is more accurate than Euler method.
+    
+    :param x0: Starting position x
+    :param y0: Starting position y
+    :param vx0: Starting velocity vx
+    :param vy0: Starting velocity vy
+    :param duration: Duration of the trajectory for the particule
+    :param dt: Timestep (the smaller, the more precise)
+    :returns: Position list along the trajectory and Jacobi constant (which should be conserved along the trajectory)
+    """
     n = int(duration/dt) # Number of iterations
     x = x0
     y = y0
@@ -141,7 +163,55 @@ def test_particule_RK4(x0, y0, vx0, vy0, duration, dt):
         y = y + dt * vy + ((dt**2)/6) * (k1y + k2y + k3y)
         vx = vx + (dt/6) * (k1x + 2 * k2x + 2 * k3x + k4x)
         vy = vy + (dt/6) * (k1y + 2 * k2y + 2 * k3y + k4y)
-        print("x = " + str(x) + " y = " + str(y))
+        # print("x = " + str(x) + " y = " + str(y))
+        if np.sqrt(x**2 + y**2) > size:
+            if dbg: print("Distance is too large, stop")
+            break
+
+        position_list.append((x, y))
+        jacobi_cst.append((-2) * float(roche_potential(x, y)) - (vx**2 + vy**2))
+    
+    return position_list, jacobi_cst
+
+def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
+    """
+    Uses RK4 method (Runge-Kutta order 4) to compute the trajectory of a particule.
+    It is more accurate than Euler method.
+    The timestep is adaptative (can be smaller or greater than dt0 when the simulation requires it)
+    
+    :param x0: Starting position x
+    :param y0: Starting position y
+    :param vx0: Starting velocity vx
+    :param vy0: Starting velocity vy
+    :param step: Number of simulation step. Because the timestep is adaptative, it is not equivalent to duration/dt for other methods
+    :param dt0: Base timestep, which will be adapted based on the particule velocity
+    :returns: Position list along the trajectory and Jacobi constant (which should be conserved along the trajectory)
+    """
+    x = x0
+    y = y0
+    vx = vx0
+    vy = vy0
+    norm0 = np.sqrt(vx0**2 + vy0**2 + epsilon**2)
+    norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
+    position_list = [(x0, y0)]
+    jacobi_cst = [(-2) * float(roche_potential(x, y)) - (vx**2 + vy**2)]
+    for _ in range(0, step):
+        dt = dt0 * (norm0/norm)
+        k1x = grad_roche_x(x, y) + 2 * Omega * vy
+        k1y = grad_roche_y(x, y) - 2 * Omega * vx
+        k2x = grad_roche_x(x + (dt/2) * vx, y + (dt/2) * vy) + 2 * Omega * (vy + (dt/2) * k1y)
+        k2y = grad_roche_y(x + (dt/2) * vx, y + (dt/2) * vy) - 2 * Omega * (vx + (dt/2) * k1x)
+        k3x = grad_roche_x(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) + 2 * Omega * (vy + (dt/2) * k2y)
+        k3y = grad_roche_y(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) - 2 * Omega * (vx + (dt/2) * k2x)
+        k4x = grad_roche_x(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) + 2 * Omega * (vy + dt * k3y)
+        k4y = grad_roche_y(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) - 2 * Omega * (vx + dt * k3x)
+
+        x = x + dt * vx + ((dt**2)/6) * (k1x + k2x + k3x)
+        y = y + dt * vy + ((dt**2)/6) * (k1y + k2y + k3y)
+        vx = vx + (dt/6) * (k1x + 2 * k2x + 2 * k3x + k4x)
+        vy = vy + (dt/6) * (k1y + 2 * k2y + 2 * k3y + k4y)
+        norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
+        # print("x = " + str(x) + " y = " + str(y))
         if np.sqrt(x**2 + y**2) > size:
             if dbg: print("Distance is too large, stop")
             break
@@ -172,8 +242,14 @@ if __name__ == "__main__":
     x_L4, y_L4 = newton_method(0, a, 100)
     x_L5, y_L5 = newton_method(0, -a, 100)
 
-    for xp, yp in point_buffer:
-        ax.scatter(xp, yp, s=40, marker="+", c=[(1, 0, 0)])
+    ax.scatter(x_L1, y_L1, s=40, marker="+", c=[(1, 0, 0)])
+    ax.scatter(x_L2, y_L2, s=40, marker="+", c=[(1, 0, 0)])
+    ax.scatter(x_L3, y_L3, s=40, marker="+", c=[(1, 0, 0)])
+    ax.scatter(x_L4, y_L4, s=40, marker="+", c=[(1, 0, 0)])
+    ax.scatter(x_L5, y_L5, s=40, marker="+", c=[(1, 0, 0)])
+
+    # for xp, yp in point_buffer:
+    #     ax.scatter(xp, yp, s=40, marker="+", c=[(1, 0, 0)])
 
     ax.scatter(a1, 0, s=60, marker=(5, 1))
     ax.scatter(a2, 0, s=60, marker=(5, 1))
@@ -192,7 +268,7 @@ if __name__ == "__main__":
 
     ax.set_title("Roche equipotentials for M=" + str(M) + ", q=" + str(q))
 
-    pos_list, jacobi_cst = test_particule_RK4(x_L2, y_L2 + 0.001 * a, 0, 0, 100, 0.01)
+    pos_list, jacobi_cst = test_particule_RK4_adaptative(x_L1, y_L1 + 0.001 * a, 0, 0, 1000000, 0.01)
     print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
     point_number = 5000
     step = int((len(pos_list) - 1)/point_number)
