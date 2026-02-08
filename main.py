@@ -8,9 +8,9 @@ G = 0.1
 dbg = True # Optional output info for debug
 delta = 0.01 # Grid step
 vector_field_delta = 0.5 # Should be smaller than delta
-epsilon = 1 # Used for regularization near singularities
+epsilon = 0.01 # Used for regularization near singularities
 diff_step = 0.01 # Used for differentiation
-error = 1e-6 # When an iterative method won't increase the accuracy of the result more than error, it will stop
+error = 1e-9 # When an iterative method won't increase the accuracy of the result more than error, it will stop
 size = 8.0
 
 # Physical parameters
@@ -46,7 +46,7 @@ def grad_roche_potential(X, Y):
     Partial_Y, Partial_X = np.gradient(roche_potential(X, Y)) # The order of gradient components returned is a bit confusing, be careful
     return Partial_X, Partial_Y
 
-# Returns the 2D gradient of the Roche potential at a given point
+# Returns the opposite of the 2D gradient of the Roche potential at a given point
 def grad_roche(x, y):
     r1 = np.sqrt((x - a1)**2 + y**2 + epsilon**2)
     r2 = np.sqrt((x - a2)**2 + y**2 + epsilon**2)
@@ -85,8 +85,7 @@ def newton_method(x0, y0, step):
     X = np.array([[x0], [y0]])
     F = np.array([[grad_roche_x(x0, y0)], [grad_roche_y(x0, y0)]])
     J = jacobian_grad_roche(x0, y0)
-    J_inv = np.linalg.inv(J)
-    X_new = X - J_inv * F
+    X_new = X - np.linalg.solve(J, F)
     x_new = float(X_new[0][0])
     y_new = float(X_new[1][0])
 
@@ -96,12 +95,68 @@ def newton_method(x0, y0, step):
 
     return newton_method(x_new, y_new, step-1)
 
+# Uses Euler method
+def test_particule(x0, y0, vx0, vy0, duration, dt):
+    n = int(duration/dt) # Number of iterations
+    x = x0
+    y = y0
+    vx = vx0
+    vy = vy0
+    position_list = [(x0, y0)]
+    for _ in range(0, n):
+        ax = grad_roche_x(x, y) + 2 * Omega * vy
+        ay = grad_roche_y(x, y) - 2 * Omega * vx
+        vx = vx + ax * dt
+        vy = vy + ay * dt
+        x = x + vx * dt
+        y = y + vy * dt
+        if np.sqrt(x**2 + y**2) > size:
+            if dbg: print("Distance is too large, stop")
+            break
+
+        position_list.append((x, y))
+    
+    return position_list
+    
+# Uses RK4 method (smaller error)
+def test_particule_RK4(x0, y0, vx0, vy0, duration, dt):
+    n = int(duration/dt) # Number of iterations
+    x = x0
+    y = y0
+    vx = vx0
+    vy = vy0
+    position_list = [(x0, y0)]
+    jacobi_cst = [(-2) * float(roche_potential(x, y)) - (vx**2 + vy**2)]
+    for _ in range(0, n):
+        k1x = grad_roche_x(x, y) + 2 * Omega * vy
+        k1y = grad_roche_y(x, y) - 2 * Omega * vx
+        k2x = grad_roche_x(x + (dt/2) * vx, y + (dt/2) * vy) + 2 * Omega * (vy + (dt/2) * k1y)
+        k2y = grad_roche_y(x + (dt/2) * vx, y + (dt/2) * vy) - 2 * Omega * (vx + (dt/2) * k1x)
+        k3x = grad_roche_x(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) + 2 * Omega * (vy + (dt/2) * k2y)
+        k3y = grad_roche_y(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) - 2 * Omega * (vx + (dt/2) * k2x)
+        k4x = grad_roche_x(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) + 2 * Omega * (vy + dt * k3y)
+        k4y = grad_roche_y(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) - 2 * Omega * (vx + dt * k3x)
+
+        x = x + dt * vx + ((dt**2)/6) * (k1x + k2x + k3x)
+        y = y + dt * vy + ((dt**2)/6) * (k1y + k2y + k3y)
+        vx = vx + (dt/6) * (k1x + 2 * k2x + 2 * k3x + k4x)
+        vy = vy + (dt/6) * (k1y + 2 * k2y + 2 * k3y + k4y)
+        print("x = " + str(x) + " y = " + str(y))
+        if np.sqrt(x**2 + y**2) > size:
+            if dbg: print("Distance is too large, stop")
+            break
+
+        position_list.append((x, y))
+        jacobi_cst.append((-2) * float(roche_potential(x, y)) - (vx**2 + vy**2))
+    
+    return position_list, jacobi_cst
 
 if __name__ == "__main__":
     x = np.arange(-size, size, delta)
     y = np.arange(-size, size, delta)
     X, Y = np.meshgrid(x, y)
     R1 = np.sqrt((X - a1)**2 + Y**2)
+    R2 = np.sqrt((X - a2)**2 + Y**2)
     Z = roche_potential(X, Y)
     fig, ax = plt.subplots()
     ax.scatter(0, 0, s=60, marker=".")
@@ -115,22 +170,34 @@ if __name__ == "__main__":
     print("x_L3 = " + str(x_L3) + " y_L3 = " + str(y_L3))
 
     x_L4, y_L4 = newton_method(0, a, 100)
+    x_L5, y_L5 = newton_method(0, -a, 100)
 
     for xp, yp in point_buffer:
         ax.scatter(xp, yp, s=40, marker="+", c=[(1, 0, 0)])
 
     ax.scatter(a1, 0, s=60, marker=(5, 1))
     ax.scatter(a2, 0, s=60, marker=(5, 1))
-    CS = ax.contour(X, Y, Z, 10)
+    zmin, zmax = np.percentile(Z, [1, 99])
+    levels = np.geomspace(zmin, zmax, 10)
+    CS = ax.contour(X, Y, Z, levels=levels)
 
     u = np.arange(-size, size, vector_field_delta)
     v = np.arange(-size, size, vector_field_delta)
     U, V = np.meshgrid(u, v)
     Partial_U, Partial_V = grad_roche_potential(U, V)
-    quiver = ax.quiver(U, V, Partial_U, Partial_V)
+    Norm = np.hypot(Partial_U, Partial_V)
+    Partial_U = np.where(abs(Norm) < 0.1, Partial_U, 0)
+    Partial_V = np.where(abs(Norm) < 0.1, Partial_V, 0)
+    quiver = ax.quiver(U, V, Partial_U, Partial_V, angles='xy', scale_units='xy', scale=0.1)
 
     ax.set_title("Roche equipotentials for M=" + str(M) + ", q=" + str(q))
 
-    plt.show()
+    pos_list, jacobi_cst = test_particule_RK4(x_L2, y_L2 + 0.001 * a, 0, 0, 100, 0.01)
+    print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
+    point_number = 5000
+    step = int((len(pos_list) - 1)/point_number)
+    for i in range(0, point_number + 1):
+        xp, yp = pos_list[i * step]
+        ax.scatter(xp, yp, s=5, marker=".", c=[(0, 0, 1)])
 
-    
+    plt.show()
