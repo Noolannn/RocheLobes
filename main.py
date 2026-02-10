@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from skimage import measure
+from scipy.spatial import ConvexHull
 
 q = 0.25
 
@@ -84,7 +85,6 @@ def keep_smallest_component(faces):
     # faces: (M,3) triangles index into verts
     M = faces.shape[0]
 
-    # 建立“共享边 -> 相邻三角形”的图
     edge2tris = {}
     for t, (a,b,c) in enumerate(faces):
         edges = [(a,b),(b,c),(c,a)]
@@ -99,7 +99,6 @@ def keep_smallest_component(faces):
             adj[t1].append(t2)
             adj[t2].append(t1)
 
-    # BFS/DFS 找连通分量
     comp_id = -np.ones(M, dtype=int)
     comp_sizes = []
     cid = 0
@@ -119,26 +118,52 @@ def keep_smallest_component(faces):
         comp_sizes.append(size)
         cid += 1
 
-    # 选最小的连通分量
     smallest = int(np.argmin(comp_sizes))
     keep = (comp_id == smallest)
     return faces[keep]
 
-def roche_lobe_plot(q):
+def polyhedron_volume(vertices):
+    hull = ConvexHull(vertices)
+    return hull.volume
+
+def mesh_volume(verts, faces):    
+    tri = verts[faces]          # (M,3,3)
+    v0 = tri[:, 0, :]
+    v1 = tri[:, 1, :]
+    v2 = tri[:, 2, :]
+    vol = np.einsum('ij,ij->i', v0, np.cross(v1, v2)) / 6.0
+    return abs(vol.sum())
+
+def roche_lobe_plot(q, whether_plot=False):
     mu=q/(1+q)
     print("mu:", mu)
     x_L1_q = bisect_root(lambda x: f(x, mu), mu-1+1e-6, mu-1e-6)
+    x_L2_q = bisect_root(lambda x: f(x, mu), -5, mu-1-1e-6)
     print("xL1:", x_L1_q)
+    print("xL2:", x_L2_q)
+    R_L2 = mu-1-x_L2_q
     
-    
-    x5, y5, z5 = 2* np.mgrid[-1:1:201j, -1:1:201j, -1:1:201j]
+    sim_range = 4
+    x5, y5, z5 = sim_range* np.mgrid[-0.5:0.5:201j, -0.5:0.5:201j, -0.5:0.5:201j]
     vol = roche_potential_3D(x5, y5, z5, q)
-
+        
+    
     dx5 = x5[1,0,0] - x5[0,0,0]
     dy5 = y5[0,1,0] - y5[0,0,0]
     dz5 = z5[0,0,1] - z5[0,0,0]
 
     iso_val = roche_potential_3D(x_L1_q, 0, 0, q)
+    
+    #print(vol)
+    #points with Roche potential smaller than that of L1
+    #points with x smaller than x_L1
+    #points with radii<L2's radius
+    print(vol.size)
+    mask = (vol < iso_val) & (x5 < x_L1_q) & ((x5**2+y5**2+z5**2) <= x_L2_q**2)
+    volume = vol[mask].size/vol.size*sim_range**3
+    print("volume:", volume)
+    
+    
     verts, faces, normals, values = measure.marching_cubes(
         vol, level=iso_val, spacing = (dx5, dy5, dz5)
     )
@@ -147,28 +172,45 @@ def roche_lobe_plot(q):
     verts_phys[:, 0] += x5.min()
     verts_phys[:, 1] += y5.min()
     verts_phys[:, 2] += z5.min()
-
-    fig5 = plt.figure(figsize=(10, 6), dpi=300)
-    ax5 = fig5.add_subplot(111, projection='3d')
+    
 
     faces_lobe = keep_smallest_component(faces)
-
-    ax5.plot_trisurf(
-        verts_phys[:, 0], verts_phys[:, 1], verts_phys[:, 2],
-        triangles=faces_lobe,
-        cmap='Spectral',
-        linewidth=0.2
-    )
-    ax5.set_box_aspect((2, 1, 1)) 
-    ax5.set_xlabel('x')
-    ax5.set_ylabel('y')
-    ax5.set_zlabel('z')
-    ax5.set_xlim(-1.2,1.2)
-    ax5.set_ylim(-0.5,0.5)
-    ax5.set_zlim(-0.5,0.5)
-    ax5.set_title(rf"Roche lobe ($q={q:.3f}$)")
-    ax5.view_init(elev=30, azim=-90)
-    plt.show()
+    faces_lobe_points=np.unique(faces_lobe)
+    #print("vertex:", verts_phys)
+    #print("face_points:", faces_lobe_points)
+    #print("(verts_phys[:, 0]<x_L1_q):", verts_phys[:, 0]<x_L1_q)
+    verts_lobe = verts_phys[faces_lobe_points]
+    verts_lobe_companion = verts_lobe[verts_lobe[:, 0]<x_L1_q]
+    volume_convex = polyhedron_volume(verts_lobe_companion)
+    print("volume_convex:", volume_convex)
+    
+    mask_faces = (verts_phys[faces_lobe][:, :, 0] < x_L1_q).all(axis=1)
+    faces_companion = faces_lobe[mask_faces]
+    
+    volume_mesh = mesh_volume(verts_phys, faces_companion)
+    print("volume_mesh:", volume_mesh)
+    
+    if (whether_plot):
+        fig5 = plt.figure(figsize=(10, 6), dpi=300)
+        ax5 = fig5.add_subplot(111, projection='3d')
+        ax5.plot_trisurf(
+            verts_phys[:, 0], verts_phys[:, 1], verts_phys[:, 2],
+            triangles=faces_lobe,
+            cmap='Spectral',
+            linewidth=0.2
+        )
+    
+        ax5.set_box_aspect((2, 1, 1)) 
+        ax5.set_xlabel('x')
+        ax5.set_ylabel('y')
+        ax5.set_zlabel('z')
+        ax5.set_xlim(-1.2,1.2)
+        ax5.set_ylim(-0.5,0.5)
+        ax5.set_zlim(-0.5,0.5)
+        ax5.set_title(rf"Roche lobe ($q={q:.3f}$)")
+        ax5.view_init(elev=30, azim=-90)
+        plt.show()
+    return volume,volume_convex, volume_mesh
 
 if __name__ == "__main__":
     a2 = a/(1+q)
@@ -227,16 +269,15 @@ if __name__ == "__main__":
         linewidth=0.3,
         shade=True
     )
-    ax2.set_xlabel('x')
-    ax2.set_ylabel('y')
-    ax2.set_zlabel(r'$\Phi_{\rm Roche}$')
+    ax2.set_xlabel('x/a')
+    ax2.set_ylabel('y/a')
+    ax2.set_zlabel(r'$\Phi_{\rm Roche}(GM/a)$')
     ax2.set_box_aspect((1, 1, 0.3))
     # view
     ax2.view_init(elev=35, azim=-60)
     ax2.set_title("Roche potential for q=" + str(q))
 
     plt.show()
-
 
     #Solve the x of L1 L2 L3
     roots = []
@@ -265,8 +306,8 @@ if __name__ == "__main__":
         r"-\frac{\mu}{(x-\mu+1)^2}\operatorname{sgn}(x-\mu+1)$"
         f",  $q={q}$"
     )
-    ax3.set_xlabel("x")
-    ax3.set_ylabel("f(x)")
+    ax3.set_xlabel("x/a")
+    ax3.set_ylabel("f(x/a)")
     ax3.set_ylim(-10, 10)
 
     ax3.plot(0, 0, 'k+', ms=10)      # CM
@@ -285,13 +326,18 @@ if __name__ == "__main__":
     ax3.text(xL3+0.01, f(xL3, mu)-0.3, ' L3', color='g', fontsize=10,
             va='top', ha='left')
 
+    ax3.text(a1+0.01, -0.3, ' M1', color='k', fontsize=10,
+            va='top', ha='left')
+    ax3.text(a2+0.01, -0.3, ' M2', color='k', fontsize=10,
+            va='top', ha='left')
     ax3.text(-2, -2.5,
-            rf'$x(L_1)={xL1:.8f}$' '\n'
-            rf'$x(L_2)={xL2:.8f}$' '\n'
-            rf'$x(L_3)={xL3:.8f}$',
+            rf'$x(L_1)={xL1:.8f}a$' '\n'
+            rf'$x(L_2)={xL2:.8f}a$' '\n'
+            rf'$x(L_3)={xL3:.8f}a$',
             fontsize=10, ha='left', va='top')
 
     plt.show()
+
 
 
 
@@ -315,6 +361,7 @@ if __name__ == "__main__":
     RP_Ls = np.unique(RP_Ls)
     RP_Ls.sort()
 
+    print(RP_Ls)
     CS_base = ax4.contour(
         X, Y, Z,
         levels=levels,
@@ -333,11 +380,12 @@ if __name__ == "__main__":
     mask = Rmask > 1.4
 
     Z_masked = np.ma.array(Z, mask=mask)
+
     CS_L1 = ax4.contour(
-        X, Y, Z_masked,
+        X, Y, Z,
         levels=[RP_L1],
-        colors='black',
-        linewidths=4.0
+        colors='blue',
+        linewidths=2.0
     )
 
     ax4.plot(0, 0, 'k+', ms=10)      # CM
@@ -357,21 +405,101 @@ if __name__ == "__main__":
     ax4.set_title(rf"Roche equipotentials with Lagrange points ($q={q}$)")
     plt.show()
 
-    x5, y5, z5 = 1.1* np.mgrid[-1:1:101j, -1:1:101j, -1:1:101j]
-    vol = roche_potential_3D(x5, y5, z5, q)
 
-    dx5 = x5[1,0,0] - x5[0,0,0]
-    dy5 = y5[0,1,0] - y5[0,0,0]
-    dz5 = z5[0,0,1] - z5[0,0,0]
+    fig2_ = plt.figure(figsize=(10, 7), dpi=300)
+    ax2_ = fig2_.add_subplot(111, projection='3d')
 
-    iso_val = RP_L1
-    verts, faces, normals, values = measure.marching_cubes(
-        vol, level=iso_val, spacing = (dx5, dy5, dz5)
+    #ax2.plot_wireframe(X2, Y2, Z2plot, rstride=1, cstride=1, linewidth=0.5, color='k')
+
+    ax2_.set_zlim(min(Zplot.min(), RP_L1), max(Zplot.max(), RP_L1))
+
+    ax2_.plot_surface(
+        X, Y, Zplot,
+        rstride=100, cstride=100,
+        color='white',
+        edgecolor='k',
+        linewidth=0.3,
+        shade=False,
+        alpha=0.3
     )
 
-    verts_phys = verts.copy()
-    verts_phys[:, 0] += x5.min()
-    verts_phys[:, 1] += y5.min()
-    verts_phys[:, 2] += z5.min()
+    ax2_.contour3D(X, Y, Z_masked, levels=[RP_L1], colors='r', linewidths=3.0)
 
-    roche_lobe_plot(q)
+    ax2_.set_xlabel('x/a')
+    ax2_.set_ylabel('y/a')
+    ax2_.set_zlabel(r'$\Phi_{\rm Roche}(GM/a)$')
+    ax2_.set_box_aspect((1, 1, 0.3))
+    # view
+    ax2_.view_init(elev=35, azim=-60)
+    ax2_.set_title("Roche potential for q=" + str(q))
+
+    plt.show()
+
+
+    print(roche_lobe_plot(0.01, 1)[0])
+
+    volume_list = []
+    volume_convex_list = []
+    volume_mesh_list = []
+    q_list = np.linspace(0.02, 1.0, 50)
+    for i in q_list:
+        volume_list.append(roche_lobe_plot(i)[0])
+        volume_convex_list.append(roche_lobe_plot(i)[1])
+        volume_mesh_list.append(roche_lobe_plot(i)[2])
+    
+    fig6 = plt.figure(figsize=(10, 6), dpi=300)
+    ax6 = fig6.add_subplot(111)
+
+    mu_list = q_list / (1 + q_list)
+    beta = 0.462
+    R_list = beta * mu_list**(1/3)
+    theor_volume = 4*np.pi/3 * R_list**3
+
+    ax6.plot(q_list, theor_volume,
+            'k--', lw=2,
+            label=rf"Theory (Eggleton-like $R={beta:.3f}"r"\mu^{1/3}$)")
+
+    ax6.plot(q_list, volume_list,
+            'o-', lw=1.8, ms=5,
+            label=r"Roche lobe volume (grid)")
+
+    ax6.plot(q_list, volume_mesh_list,
+            'd-', lw=1.8, ms=5,
+            label=r"Roche lobe volume (mesh)")
+
+    ax6.plot(q_list, volume_convex_list,
+            's:', lw=1.5, ms=4,
+            label=r"Convex hull (upper bound)")
+
+    rel_err = (theor_volume-volume_mesh_list)/volume_mesh_list
+
+    ax6_err = ax6.twinx()
+
+    ax6_err.plot(q_list, rel_err,
+                'r^-', lw=1.5, ms=5,
+                label=r"Relative error $(V_{\rm th}-V_{\rm mesh})/V_{\rm mesh}$")
+
+    ax6_err.set_ylabel(r"Relative error", fontsize=14, color='r', rotation=270)
+    ax6_err.yaxis.set_label_coords(1.09, 0.5)
+    ax6_err.tick_params(axis='y', labelcolor='r')
+
+
+    lines1, labels1 = ax6.get_legend_handles_labels()
+    lines2, labels2 = ax6_err.get_legend_handles_labels()
+
+    ax6.legend(lines1 + lines2, labels1 + labels2,
+            frameon=False, fontsize=12, loc='best')
+
+    ax6.set_xlabel(r"Mass ratio $q = M_2/M_1$", fontsize=14)
+    ax6.set_ylabel(r"Roche lobe volume ($a^3$ units)", fontsize=14)
+
+    ax6.set_title("Roche lobe volume vs mass ratio", fontsize=14)
+
+    ax6.grid(True, alpha=0.5, linestyle='--')
+    #ax6.legend(frameon=False, fontsize=14)
+
+    ax6.set_xlim(0, 1)
+    ax6.set_ylim(0, 0.25)
+
+    plt.tight_layout()
+    plt.show()
