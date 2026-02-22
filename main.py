@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from mpl_toolkits.mplot3d import axes3d
+from random import random
 
 # Physical constant
 G = 0.1
@@ -8,6 +10,7 @@ G = 0.1
 dbg = True # Optional output info for debug
 delta = 0.01 # Grid step
 vector_field_delta = 0.5 # Should be smaller than delta
+wireframe_delta = 0.05
 epsilon = 0.01 # Used for regularization near singularities
 diff_step = 0.01 # Used for differentiation
 error = 1e-9 # When an iterative method won't increase the accuracy of the result more than error, it will stop
@@ -17,7 +20,7 @@ size = 8.0
 M = 10
 q = 2
 a = 4
-Omega = 0.1
+Omega = 0.1 # 0.1
 
 # Constraint physical parameters
 M1 = M/(1 + q)
@@ -127,7 +130,7 @@ def test_particule_euler(x0, y0, vx0, vy0, duration, dt):
         position_list.append((x, y))
     
     return position_list
-    
+
 # Uses RK4 method (smaller error)
 def test_particule_RK4(x0, y0, vx0, vy0, duration, dt):
     """
@@ -172,6 +175,96 @@ def test_particule_RK4(x0, y0, vx0, vy0, duration, dt):
         jacobi_cst.append((-2) * float(roche_potential(x, y)) - (vx**2 + vy**2))
     
     return position_list, jacobi_cst
+
+def scatter_ellipsis(c_s, x_L1):
+    B = (1/2) * ((G * M1)/pow(abs(x_L1 - a1), 3) + (G * M2)/pow(abs(x_L1 - a2), 3) - (Omega**2))
+    C = (1/2) * ((G * M1)/pow(abs(x_L1 - a1), 3) + (G * M2)/pow(abs(x_L1 - a2), 3))
+    E = (1/2) * (c_s**2)
+    b = np.sqrt(E/B)
+    c = np.sqrt(E/C)
+    y = 2 * b * random()
+    z = 2 * c * random()
+    y = y - b
+    z = z - c
+    while (y**2)/(b**2) + (z**2)/(c**2) > 1:
+        y = 2 * b * random()
+        z = 2 * c * random()
+        y = y - b
+        z = z - c
+    
+    return y, z
+
+def rk4_step(x, y, vx, vy, dt0, force_sync = False):
+    norm0 = epsilon
+    norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
+    dt = dt0 * (norm0/norm)
+    # Used to keep up with real time and sync all particles
+    if force_sync:
+        # print("Force sync enabled")
+        dt = dt0
+    k1x = grad_roche_x(x, y) + 2 * Omega * vy
+    k1y = grad_roche_y(x, y) - 2 * Omega * vx
+    k2x = grad_roche_x(x + (dt/2) * vx, y + (dt/2) * vy) + 2 * Omega * (vy + (dt/2) * k1y)
+    k2y = grad_roche_y(x + (dt/2) * vx, y + (dt/2) * vy) - 2 * Omega * (vx + (dt/2) * k1x)
+    k3x = grad_roche_x(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) + 2 * Omega * (vy + (dt/2) * k2y)
+    k3y = grad_roche_y(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) - 2 * Omega * (vx + (dt/2) * k2x)
+    k4x = grad_roche_x(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) + 2 * Omega * (vy + dt * k3y)
+    k4y = grad_roche_y(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) - 2 * Omega * (vx + dt * k3x)
+
+    x = x + dt * vx + ((dt**2)/6) * (k1x + k2x + k3x)
+    y = y + dt * vy + ((dt**2)/6) * (k1y + k2y + k3y)
+    vx = vx + (dt/6) * (k1x + 2 * k2x + 2 * k3x + k4x)
+    vy = vy + (dt/6) * (k1y + 2 * k2y + 2 * k3y + k4y)
+    
+    jacobi_cst = (-2) * float(roche_potential(x, y)) - (vx**2 + vy**2)
+
+    return (x, y), (vx, vy), dt, jacobi_cst
+
+def simulate_flux(n0, x_L1, v, noise, time, dt_real, dt0, reinject = False):
+    t = 0
+    step = 0
+    particles = [[]]
+    while t < time:
+        print("Simulating t = " + str(t))
+        if reinject or step == 0:
+            for _ in range(0, n0):
+                y, z = scatter_ellipsis(v, x_L1)
+                vx = v * abs(np.random.normal(0, 0.2)) + v
+                vy = v * np.random.normal(0, 0.2)
+                vz = v * np.random.normal(0, 0.2)
+                particles[step].append((x_L1, y, z, t, vx, vy, vz))
+        particles.append([])
+        print("There is " + str(len(particles[step])) + "particles")
+        for part in particles[step]:
+            x0 = part[0]
+            y0 = part[1]
+            z = part[2]
+            vx0 = part[4]
+            vy0 = part[5]
+            vz = part[6]
+            t_part = part[3]
+            last_dt = 0
+            while t_part < t + dt_real:
+                if np.sqrt(x0**2 + y0**2) > size:
+                    if dbg: print("Distance is too large, stop")
+                    break
+                (x, y), (vx, vy), dt, j = rk4_step(x0, y0, vx0, vy0, dt0)
+                if t_part + dt > t + dt_real:
+                    (x, y), (vx, vy), dt, j = rk4_step(x0, y0, vx0, vy0, t + dt_real - t_part, True)
+                x0 = x
+                y0 = y
+                vx0 = vx
+                vy0 = vy
+                last_dt = dt
+                t_part = t_part + dt
+            particles[step+1].append((x0, y0, z, t + dt_real, vx0, vy0, vz))
+        
+        t = t + dt_real
+        step = step + 1
+
+    return particles
+
+
 
 def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
     """
@@ -221,6 +314,51 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
     
     return position_list, jacobi_cst
 
+def roche_potential_expansion_L1(x_L1, X, Y, Z=0):
+    PhiRocheL1 = roche_potential(x_L1, 0)
+    PartialX2 = (- (G * M1)/pow(abs(x_L1-a1), 3) - (G * M2)/pow(abs(x_L1-a2), 3) - (1/2) * (Omega**2))
+    PartialY2 = (1/2) * ((G * M1)/pow(abs(x_L1-a1), 3) + (G * M2)/pow(abs(x_L1-a2), 3) - (Omega**2))
+    PartialZ2 = (1/2) * ((G * M1)/pow((x_L1-a1), 3) + (G * M2)/pow((x_L1-a2), 3))
+    return PhiRocheL1 + PartialX2 * ((x_L1 - X)**2) + PartialY2 * (Y**2) + PartialZ2 * (Z**2)
+
+def wireframe_potential(ax, x_L1):
+    x = np.arange(-size, size, wireframe_delta)
+    y = np.arange(-size, size, wireframe_delta)
+    X, Y = np.meshgrid(x, y)
+    Z = roche_potential(X, Y)
+    z_limit = -2
+    Z = np.where(Z > z_limit, Z, z_limit)
+    r_limit = a/6
+    u = np.arange(-size, size, wireframe_delta/2)
+    v = np.arange(-size, size, wireframe_delta/2)
+    U, V = np.meshgrid(u, v)
+    X2 = np.where(abs(x_L1 - U) < r_limit, U, r_limit)
+    Y2 = np.where(abs(V) < r_limit, V, r_limit)
+    Z2 = roche_potential_expansion_L1(x_L1, X2, Y2)
+    Z2 = np.where(Z2 > z_limit, Z2, z_limit)
+    ax.plot_surface(X, Y, Z, edgecolor='royalblue', lw=0.5, rstride=8, cstride=8, alpha=0.3)
+    ax.plot_surface(X2, Y2, Z2, edgecolor='red', lw=0.5, rstride=8, cstride=8, alpha=0.3)
+
+def potential_slice(ax, x_L1):
+    y = np.arange(-size/5, size/5, delta/5)
+    dx = a/100
+    ax.plot(y, roche_potential(x_L1, y))
+    ax.plot(y, roche_potential_expansion_L1(x_L1, x_L1, y))
+    ax.plot(y, roche_potential(x_L1 + 4 * dx, y))
+    ax.plot(y, roche_potential_expansion_L1(x_L1, x_L1 + 4 * dx, y))
+
+def yz_potential_slice(ax: axes3d.Axes3D, x_L1):
+    scale = 5
+    y = np.arange(-size/scale, size/scale, wireframe_delta/scale)
+    z = np.arange(-size/scale, size/scale, wireframe_delta/scale)
+    Y, Z = np.meshgrid(y, z)
+    V = roche_potential_expansion_L1(x_L1, x_L1, Y, Z)
+    # v_limit = -2
+    # V = np.where(Z > v_limit, Z, v_limit)
+    ax.plot_surface(Y, Z, V, edgecolor='royalblue', lw=0.5, rstride=8, cstride=8, alpha=0.3)
+    ax.set_xlabel("y")
+    ax.set_ylabel("z")
+
 if __name__ == "__main__":
     x = np.arange(-size, size, delta)
     y = np.arange(-size, size, delta)
@@ -229,6 +367,9 @@ if __name__ == "__main__":
     R2 = np.sqrt((X - a2)**2 + Y**2)
     Z = roche_potential(X, Y)
     fig, ax = plt.subplots()
+    fig2, ax2 = plt.subplots(subplot_kw={"projection": "3d"})
+    fig3, ax3 = plt.subplots()
+    fig4, ax4 = plt.subplots(subplot_kw={"projection": "3d"})
     ax.scatter(0, 0, s=60, marker=".")
 
     x_L1, y_L1 = newton_method(0, 0, 10)
@@ -248,8 +389,9 @@ if __name__ == "__main__":
     ax.scatter(x_L4, y_L4, s=40, marker="+", c=[(1, 0, 0)])
     ax.scatter(x_L5, y_L5, s=40, marker="+", c=[(1, 0, 0)])
 
-    # for xp, yp in point_buffer:
-    #     ax.scatter(xp, yp, s=40, marker="+", c=[(1, 0, 0)])
+    potential_slice(ax3, x_L1)
+    wireframe_potential(ax2, x_L1)
+    yz_potential_slice(ax4, x_L1)
 
     ax.scatter(a1, 0, s=60, marker=(5, 1))
     ax.scatter(a2, 0, s=60, marker=(5, 1))
@@ -268,12 +410,43 @@ if __name__ == "__main__":
 
     ax.set_title("Roche equipotentials for M=" + str(M) + ", q=" + str(q))
 
-    pos_list, jacobi_cst = test_particule_RK4_adaptative(x_L1, y_L1 + 0.001 * a, 0, 0, 1000000, 0.01)
-    print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
-    point_number = 5000
-    step = int((len(pos_list) - 1)/point_number)
-    for i in range(0, point_number + 1):
-        xp, yp = pos_list[i * step]
-        ax.scatter(xp, yp, s=5, marker=".", c=[(0, 0, 1)])
+    # Generate trajectory
+    # pos_list, jacobi_cst = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 1000000, 0.1)
+    # print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
+    # point_number = 5000
+    # step = int((len(pos_list) - 1)/point_number)
+    # for i in range(0, point_number + 1):
+    #     xp, yp = pos_list[i * step]
+    #     ax.scatter(xp, yp, s=5, marker=".", c=[(0, 0, 1)])
+
+    fig5, ax5 = plt.subplots()
+    ax5.set_xlabel("y")
+    ax5.set_ylabel("z")
+    for _ in range(0, 100):
+        y, z = scatter_ellipsis(1, x_L1)
+        ax5.scatter(y, z, s=40, marker="+", c=[(1, 0, 0)])
+
+    particles = simulate_flux(100, x_L1, epsilon, 0, 100, 0.1, 0.1)
+
+    x_all = []
+    y_all = []
+
+    for bundle in particles:
+        for part in bundle:
+            x = part[0]
+            y = part[1]
+            x_all.append(x)
+            y_all.append(y)
+            # ax.scatter(x, y, s=5, marker=".", c=[(0, 0, 1)])
+
+    np.histogram2d(x_all, y_all)
+
+    H, xedges, yedges = np.histogram2d(x_all, y_all, bins=200)
+    ax.imshow(
+        np.log(H.T + 1),
+        origin='lower',
+        extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+        aspect='equal'
+    )
 
     plt.show()
