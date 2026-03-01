@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d import axes3d
 from random import random
+import time
 
 # Physical constant
 G = 0.1
@@ -97,6 +98,17 @@ def newton_method(x0, y0, step):
         return x_new, y_new
 
     return newton_method(x_new, y_new, step-1)
+
+def read_pos_from_file(file):
+    pos_list = []
+    with open(file) as f:
+        for line in f.readlines():
+            split_line = line.split(" ")
+            x = float(split_line[0])
+            y = float(split_line[1])
+            pos_list.append((x, y))
+
+    return pos_list
 
 def test_particule_euler(x0, y0, vx0, vy0, duration, dt):
     """
@@ -267,6 +279,7 @@ def simulate_flux(n0, x_L1, v, noise, time, dt_real, dt0, reinject = False):
 
 
 def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
+    start = time.time()
     """
     Uses RK4 method (Runge-Kutta order 4) to compute the trajectory of a particule.
     It is more accurate than Euler method.
@@ -280,6 +293,7 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
     :param dt0: Base timestep, which will be adapted based on the particule velocity
     :returns: Position list along the trajectory and Jacobi constant (which should be conserved along the trajectory)
     """
+    total_time = 0
     x = x0
     y = y0
     vx = vx0
@@ -309,9 +323,12 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
             if dbg: print("Distance is too large, stop")
             break
 
+        total_time += dt
         position_list.append((x, y))
         jacobi_cst.append((-2) * float(roche_potential(x, y)) - (vx**2 + vy**2))
     
+    end = time.time()
+    if dbg: print("Elapsed time : " + str(end - start) + "s")
     return position_list, jacobi_cst
 
 def roche_potential_expansion_L1(x_L1, X, Y, Z=0):
@@ -411,13 +428,16 @@ if __name__ == "__main__":
     ax.set_title("Roche equipotentials for M=" + str(M) + ", q=" + str(q))
 
     # Generate trajectory
-    # pos_list, jacobi_cst = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 1000000, 0.1)
-    # print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
-    # point_number = 5000
-    # step = int((len(pos_list) - 1)/point_number)
-    # for i in range(0, point_number + 1):
-    #     xp, yp = pos_list[i * step]
-    #     ax.scatter(xp, yp, s=5, marker=".", c=[(0, 0, 1)])
+    pos_list, jacobi_cst = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 1000000, 0.01)
+    print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
+
+    # pos_list = read_pos_from_file("pos.txt") # Read trajectory generated from the Rust code
+
+    point_number = 5000
+    step = int((len(pos_list) - 1)/point_number)
+    for i in range(0, point_number + 1):
+        xp, yp = pos_list[i * step]
+        ax.scatter(xp, yp, s=5, marker=".", c=[(0, 0, 1)])
 
     fig5, ax5 = plt.subplots()
     ax5.set_xlabel("y")
@@ -426,27 +446,27 @@ if __name__ == "__main__":
         y, z = scatter_ellipsis(1, x_L1)
         ax5.scatter(y, z, s=40, marker="+", c=[(1, 0, 0)])
 
-    particles = simulate_flux(100, x_L1, epsilon, 0, 100, 0.1, 0.1)
+    # particles = simulate_flux(100, x_L1, epsilon, 0, 100, 0.1, 0.1)
 
-    x_all = []
-    y_all = []
+    # x_all = []
+    # y_all = []
 
-    for bundle in particles:
-        for part in bundle:
-            x = part[0]
-            y = part[1]
-            x_all.append(x)
-            y_all.append(y)
-            # ax.scatter(x, y, s=5, marker=".", c=[(0, 0, 1)])
+    # for bundle in particles:
+    #     for part in bundle:
+    #         x = part[0]
+    #         y = part[1]
+    #         x_all.append(x)
+    #         y_all.append(y)
+    #         # ax.scatter(x, y, s=5, marker=".", c=[(0, 0, 1)])
 
-    np.histogram2d(x_all, y_all)
+    # np.histogram2d(x_all, y_all)
 
-    H, xedges, yedges = np.histogram2d(x_all, y_all, bins=200)
-    ax.imshow(
-        np.log(H.T + 1),
-        origin='lower',
-        extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
-        aspect='equal'
-    )
+    # H, xedges, yedges = np.histogram2d(x_all, y_all, bins=200)
+    # ax.imshow(
+    #     np.log(H.T + 1),
+    #     origin='lower',
+    #     extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
+    #     aspect='equal'
+    # )
 
     plt.show()
