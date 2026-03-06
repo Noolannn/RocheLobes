@@ -278,7 +278,7 @@ def simulate_flux(n0, x_L1, v, noise, time, dt_real, dt0, reinject = False):
 
 
 
-def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
+def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0, loss = False):
     start = time.time()
     """
     Uses RK4 method (Runge-Kutta order 4) to compute the trajectory of a particule.
@@ -293,6 +293,8 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
     :param dt0: Base timestep, which will be adapted based on the particule velocity
     :returns: Position list along the trajectory and Jacobi constant (which should be conserved along the trajectory)
     """
+    first_collision = False
+    abs_e_loss = 1/1.0001
     total_time = 0
     x = x0
     y = y0
@@ -302,8 +304,12 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
     norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
     position_list = [(x0, y0)]
     jacobi_cst = [(-2) * float(roche_potential(x, y)) - (vx**2 + vy**2)]
-    for _ in range(0, step):
+    for current_step in range(0, step):
         dt = dt0 * (norm0/norm)
+        scale = 1
+        if norm/norm0 < 1:
+            scale = norm/norm0
+        e_loss = abs_e_loss * scale
         k1x = grad_roche_x(x, y) + 2 * Omega * vy
         k1y = grad_roche_y(x, y) - 2 * Omega * vx
         k2x = grad_roche_x(x + (dt/2) * vx, y + (dt/2) * vy) + 2 * Omega * (vy + (dt/2) * k1y)
@@ -318,6 +324,101 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0):
         vx = vx + (dt/6) * (k1x + 2 * k2x + 2 * k3x + k4x)
         vy = vy + (dt/6) * (k1y + 2 * k2y + 2 * k3y + k4y)
         norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
+
+        # Must be conserved in a collision
+        v_norm = np.sqrt(vx**2 + vy**2)
+        rel_x = (x - a1)
+        rel_y = y
+        rel_norm = np.sqrt(rel_x**2 + rel_y**2)
+
+        if loss and v_norm > epsilon and rel_norm > epsilon:
+            v_theta = np.atan2(vx, vy)
+            rel_theta = np.atan2(rel_x, rel_y)
+            theta = rel_theta - v_theta
+            A = (1 + (rel_x**2)/(rel_y**2))
+            B = ((2 * rel_x)/(rel_y**2)) * (rel_y * vx - rel_x * vy)
+            C = (1/rel_y**2) * ((rel_y * vx - rel_x * vy)**2) - (e_loss**2) * (vx**2 + vy**2)
+            Delta = (B**2) - 4 * A * C
+            if Delta > epsilon: # Else no solution
+                sqrt_delta = np.sqrt(Delta)
+                new_vy_1 = (- B - sqrt_delta)/(2 * A)
+                new_vy_2 = (- B + sqrt_delta)/(2 * A)
+                new_vx_1 = (1/rel_y) * (rel_x * new_vy_1 - x * vy + y * vx)
+                new_vx_2 = (1/rel_y) * (rel_x * new_vy_2 - x * vy + y * vx)
+                v1 = (new_vx_1, new_vy_1)
+                v2 = (new_vx_1, new_vy_2)
+                v3 = (new_vx_2, new_vy_1)
+                v4 = (new_vx_2, new_vy_2)
+                normalized_v1 = v1/np.hypot(new_vx_1, new_vy_1)
+                normalized_v2 = v2/np.hypot(new_vx_1, new_vy_2)
+                normalized_v3 = v3/np.hypot(new_vx_2, new_vy_1)
+                normalized_v4 = v4/np.hypot(new_vx_2, new_vy_2)
+                normalized_v = (vx, vy)/np.hypot(vx, vy)
+                v = (vx, vy)
+                dots = [np.dot(normalized_v, normalized_v1), np.dot(normalized_v, normalized_v2), np.dot(normalized_v, normalized_v3), np.dot(normalized_v, normalized_v4)]
+                max = -1.0
+                index = 0
+                for i in range(0, 4):
+                    if dots[i] > max:
+                        max = dots[i]
+                        index = i
+                old_vx = vx
+                old_vy = vy
+                match index:
+                    case 0:
+                        vx = v1[0]
+                        vy = v1[1]
+                    case 1:
+                        vx = v2[0]
+                        vy = v2[1]
+                    case 2:
+                        vx = v3[0]
+                        vy = v3[1]
+                    case 3:
+                        vx = v4[0]
+                        vy = v4[1]
+                if first_collision == False:
+                    first_collision = True
+                    print("Max dot : " + str(max))
+                    print("Old vx : " + str(old_vx) + " old vy : " + str(old_vy))
+                    print("New vx : " + str(vx) + " new vy : " + str(vy))
+                    print("Current step : " + str(current_step))
+                    print("dots : " + str(dots))
+                    print("v1 : " + str(v1))
+                    print("normalized v1 : " + str(normalized_v1))
+
+
+        # Turned off for now
+        if False and v_norm > epsilon and rel_norm > epsilon: # If v_norm is too small, we can't perform the operation
+            v_theta = np.atan2(vx, vy)
+            rel_theta = np.atan2(rel_x, rel_y)
+            theta = rel_theta - v_theta
+            angular_momentum = rel_norm * v_norm * np.sin(theta)
+            angular_momentum2 = (x - a1) * vy - y * vx
+            dotprod = np.dot((rel_x, rel_y)/rel_norm, (vx, vy)/v_norm)
+            theta = np.acos(dotprod)
+            if abs((1/e_loss) * np.sin(theta)) < 1.0 - epsilon: # Else orbit is too circular
+                new_v_norm = e_loss * v_norm
+                new_theta = np.asin((1/e_loss) * np.sin(theta))
+                print("Theta : " + str(theta))
+                print("New theta : " + str(new_theta))
+                print("np.sin(theta) * np.sin(new_theta) = " + str(np.sin(theta) * np.sin(new_theta)))
+                new_angular_momentum = rel_norm * new_v_norm * np.sin(new_theta)
+                print("Angular momentum : " + str(angular_momentum) + " new angular momentum : " + str(new_angular_momentum))
+                print("Velocity norm : " + str(v_norm) + " new velocity norm : " + str(new_v_norm))
+                print("ratio : " + str(np.exp(-dt0/(5 *dt))))
+                new_v_theta = rel_theta - new_theta
+                if abs((v_theta - new_v_theta) % (2 * np.pi)) > 0.1:
+                    new_v_theta += np.pi
+                    if abs((v_theta - new_v_theta) % (2 * np.pi)) > 0.1:
+                        print("Can't keep up with the angle difference")
+                print("Difference in angle : " + str((v_theta - new_v_theta) % 6.28))
+                rot_angle = (v_theta - new_v_theta) % (2 * np.pi)
+                new_vx = np.cos(rot_angle) * vx - np.sin(rot_angle) * vy
+                new_vy = np.sin(rot_angle) * vx + np.cos(rot_angle) * vy
+                vx = e_loss * new_vx
+                vy = e_loss * new_vy
+
         # print("x = " + str(x) + " y = " + str(y))
         if np.sqrt(x**2 + y**2) > size:
             if dbg: print("Distance is too large, stop")
@@ -428,15 +529,22 @@ if __name__ == "__main__":
     ax.set_title("Roche equipotentials for M=" + str(M) + ", q=" + str(q))
 
     # Generate trajectory
-    pos_list, jacobi_cst = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 1000000, 0.01)
-    print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
+    # pos_list, jacobi_cst = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 1000000, 0.01)
+    # print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
+    pos_list2, jacobi_cst2 = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 949, 0.01, True)
+    print("min = " + str(min(jacobi_cst2)) + " max = " + str(max(jacobi_cst2)))
+
 
     # pos_list = read_pos_from_file("pos.txt") # Read trajectory generated from the Rust code
 
-    point_number = 5000
-    step = int((len(pos_list) - 1)/point_number)
-    for i in range(0, point_number + 1):
-        xp, yp = pos_list[i * step]
+    # point_number = 5000
+    # step = int((len(pos_list) - 1)/point_number)
+    # for i in range(0, point_number + 1):
+    #     xp, yp = pos_list[i * step]
+    #     ax.scatter(xp, yp, s=5, marker=".", c=[(1, 0, 0)])
+
+    for i in range(0, len(pos_list2)):
+        xp, yp = pos_list2[i]
         ax.scatter(xp, yp, s=5, marker=".", c=[(0, 0, 1)])
 
     fig5, ax5 = plt.subplots()
