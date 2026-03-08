@@ -5,7 +5,7 @@ from random import random
 import time
 
 # Physical constant
-G = 0.1
+G = 1
 
 # Simulation parameters
 dbg = True # Optional output info for debug
@@ -18,10 +18,10 @@ error = 1e-9 # When an iterative method won't increase the accuracy of the resul
 size = 8.0
 
 # Physical parameters
-M = 10
+M = 1
 q = 2
-a = 4
-Omega = 0.1 # 0.1
+a = 1
+Omega = np.sqrt(G*M/a**3) # 0.1
 gamma = 0.01 * Omega
 
 # Constraint physical parameters
@@ -352,13 +352,6 @@ def test_particule_RK4_adaptative_collision(x0, y0, vx0, vy0, step, dt0, loss = 
     :param dt0: Base timestep, which will be adapted based on the particule velocity
     :returns: Position list along the trajectory and Jacobi constant (which should be conserved along the trajectory)
     """
-    first_rel_pos = (0.0, 0.0)
-    first_velocity = (0.0, 0.0)
-    first_pos = (0.0, 0.0)
-    
-    first_collision = False
-    abs_e_loss = 1/1.0001
-    alpha = 0.01
 
     total_time = 0
     x = x0
@@ -378,32 +371,13 @@ def test_particule_RK4_adaptative_collision(x0, y0, vx0, vy0, step, dt0, loss = 
     time_list = [total_time]
     angular_momentum = rel_x * vy - rel_y * vx
     angular_momentum_list = [angular_momentum]
-    colors = [(0, 0, 1)]
     for current_step in range(0, step):
         dt = dt0 * (norm0/norm)
-        scale = 1
-        if norm/norm0 < 1:
-            scale = norm/norm0
-        e_loss = abs_e_loss * scale
 
         rel_x = (x - a1)
         rel_y = y
-        r = (rel_x, rel_y)
-        v = (vx, vy)
         r_norm = np.hypot(rel_x, rel_y)
-        r_normalized = r/r_norm
-        v_rad = np.dot(v, r_normalized)
-        a_diss = - gamma * v_rad * r_normalized
-
-        # k1x = grad_roche_x(x, y) + 2 * Omega * vy
-        # k1y = grad_roche_y(x, y) - 2 * Omega * vx
-        # k2x = grad_roche_x(x + (dt/2) * vx, y + (dt/2) * vy) + 2 * Omega * (vy + (dt/2) * k1y)
-        # k2y = grad_roche_y(x + (dt/2) * vx, y + (dt/2) * vy) - 2 * Omega * (vx + (dt/2) * k1x)
-        # k3x = grad_roche_x(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) + 2 * Omega * (vy + (dt/2) * k2y)
-        # k3y = grad_roche_y(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) - 2 * Omega * (vx + (dt/2) * k2x)
-        # k4x = grad_roche_x(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) + 2 * Omega * (vy + dt * k3y)
-        # k4y = grad_roche_y(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) - 2 * Omega * (vx + dt * k3x)
-
+        
         k1 = acc(x, y, vx, vy)
         k1x = k1[0]
         k1y = k1[1]
@@ -423,7 +397,6 @@ def test_particule_RK4_adaptative_collision(x0, y0, vx0, vy0, step, dt0, loss = 
         vy = vy + (dt/6) * (k1y + 2 * k2y + 2 * k3y + k4y)
         norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
 
-        # print("x = " + str(x) + " y = " + str(y))
         if np.sqrt(x**2 + y**2) > size:
             if dbg: print("Distance is too large, stop")
             break
@@ -437,11 +410,10 @@ def test_particule_RK4_adaptative_collision(x0, y0, vx0, vy0, step, dt0, loss = 
         radius_list.append(r_norm)
         time_list.append(total_time)
         angular_momentum_list.append(angular_momentum)
-        colors.append(((1 * (current_step/step)), 0, (step - current_step)/step))
     
     end = time.time()
     if dbg: print("Elapsed time : " + str(end - start) + "s")
-    return position_list, jacobi_cst, energy_list, radius_list, angular_momentum_list, time_list, colors
+    return position_list, jacobi_cst, radius_list, time_list
 
 
 def test_particule_RK4_adaptative2(x0, y0, vx0, vy0, step, dt0, loss = False):
@@ -743,6 +715,93 @@ def yz_potential_slice(ax: axes3d.Axes3D, x_L1):
     ax.set_xlabel("y")
     ax.set_ylabel("z")
 
+def plot_2D_Roche_equipotentials_xyplane(lagrangian_points):
+    delta = 0.01
+    size = 2
+    x = np.arange(-size, size, delta)
+    y = np.arange(-size, size, delta)
+    # Define the grid
+    X, Y = np.meshgrid(x, y)
+    Z = roche_potential(X, Y)
+    # Avoid the deep wells around 2 stars
+    zmin, zmax = np.percentile(Z, [30, 100])
+    levels = np.linspace(zmin, zmax, 30)
+    
+    xL1 = lagrangian_points[0][0]
+    xL2 = lagrangian_points[1][0]
+    xL3 = lagrangian_points[2][0]
+    xL4 = lagrangian_points[3][0]
+    xL5 = lagrangian_points[4][0]
+    yL1 = lagrangian_points[0][1]
+    yL2 = lagrangian_points[1][1]
+    yL3 = lagrangian_points[2][1]
+    yL4 = lagrangian_points[3][1]
+    yL5 = lagrangian_points[4][1]
+
+    # Calculate Roche potentials of all the Lagrangian points
+    RP_L1 = roche_potential(xL1, yL1)
+    RP_L2 = roche_potential(xL2, yL2)
+    RP_L3 = roche_potential(xL3, yL3)
+    RP_L4 = roche_potential(xL4, yL4)
+    RP_L5 = roche_potential(xL5, yL5)
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 10), dpi=300)
+    ax.set_aspect('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_frame_on(False)
+
+    ax.set_xlim(-1.5, 1.5)
+    ax.set_ylim(-1.5, 1.5)
+    
+    
+    RP_Ls = np.array([RP_L1, RP_L2, RP_L3, RP_L4, RP_L5])
+    RP_Ls = np.unique(RP_Ls)
+    RP_Ls.sort()
+    
+    # Basic Roche equipotentials
+    CS_base = ax.contour(
+        X, Y, Z,
+        levels=levels,
+        colors='black',
+        linewidths=0.4
+    )
+    # Roche equipotentials for Lagrangian points
+    CS_Ls = ax.contour(
+        X, Y, Z,
+        levels=RP_Ls.tolist(),
+        colors='black',
+        linewidths=2.0
+    )
+    # Roche equipotential for L1 (highlight)
+    CS_L1 = ax.contour(
+        X, Y, Z,
+        levels=[RP_L1],
+        colors='blue',
+        linewidths=2.0
+    )
+
+    ax.plot(0, 0, 'k+', ms=10) # CM
+    ax.plot(a1, 0, 'ko', ms=5) # M1
+    ax.plot(a2, 0, 'ko', ms=5) # M2
+    ax.text(a1+0.01, -0.01, r'$M_1$', color='k', fontsize=10, va='top', ha='left')
+    ax.text(a2+0.01, -0.01, r'$M_2$', color='k', fontsize=10, va='top', ha='left')
+
+    ax.plot(xL1, 0, 'r^', ms=6)
+    ax.text(xL1+0.03, 0.02, r'$L_1$', fontsize=11, color='r')
+    ax.plot(xL2, 0, 'r^', ms=6)
+    ax.text(xL2-0.10, 0.02, r'$L_2$', fontsize=11, color='r')
+    ax.plot(xL3, 0, 'r^', ms=6)
+    ax.text(xL3+0.03, 0.02, r'$L_3$', fontsize=11, color='r')
+    ax.plot(xL4, yL4, 'r^', ms=6)
+    ax.text(xL4+0.03, yL4+0.03, r'$L_4$', fontsize=11, color='r')
+    ax.plot(xL5, yL5, 'r^', ms=6)
+    ax.text(xL5+0.03, yL5-0.08, r'$L_5$', fontsize=11, color='r')
+
+    ax.set_title(rf"Roche equipotentials with Lagrange points ($q={q}$)", fontsize=14)
+    return fig, ax
+
 if __name__ == "__main__":
     x = np.arange(-size, size, delta)
     y = np.arange(-size, size, delta)
@@ -794,6 +853,10 @@ if __name__ == "__main__":
 
     ax.set_title("Roche equipotentials for M=" + str(M) + ", q=" + str(q))
 
+    fig0, ax0 = plt.subplots()
+
+    # plot_2D_Roche_equipotentials_xyplane([(x_L1, y_L1), (x_L2, y_L2), (x_L3, y_L3), (x_L4, y_L4), (x_L5, y_L5)])
+
     # Generate trajectory
     # pos_list, jacobi_cst, first_rel_pos, first_velocity, first_pos, colors = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 94900, 0.01)
     # print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
@@ -806,8 +869,14 @@ if __name__ == "__main__":
     # ax.quiver(first_pos[0], first_pos[1], first_velocity[0], first_velocity[1], angles='xy', scale_units='xy', scale=1.0)
 
 
-    pos_list, jacobi_list, radius_list, time_list, x_list, y_list = read_from_file("pos.txt") # Read trajectory generated from the Rust code
-    print("min = " + str(min(jacobi_list)) + " max = " + str(max(jacobi_list)))
+    # pos_list, jacobi_list, radius_list, time_list, x_list, y_list = read_from_file("L1_trajectory.txt") # Read trajectory generated from the Rust code
+    # print("min = " + str(min(jacobi_list)) + " max = " + str(max(jacobi_list)))
+    # ax.scatter(x_list, y_list, s=4, marker=".", edgecolors='none', rasterized=True, c=time_list, cmap="plasma")
+    # fig7, ax7 = plt.subplots()
+    # ax7.plot(time_list, radius_list)
+    # ax7.set_xlabel("Time")
+    # ax7.set_ylabel("Radius")
+
 
     # for i in range(0, len(pos_list)):
     #     xp, yp = pos_list[i]
@@ -819,10 +888,9 @@ if __name__ == "__main__":
     #     xp, yp = pos_list[i * step]
     #     ax.scatter(xp, yp, s=1, marker=".", edgecolors='none', rasterized=True, c=[((1 * (i/(point_number + 1))), 0, (point_number + 1 - i)/(point_number + 1))])
 
-    ax.scatter(x_list, y_list, s=4, marker=".", edgecolors='none', rasterized=True, c=time_list, cmap="plasma")
 
     # fig6, ax6 = plt.subplots()
-    fig7, ax7 = plt.subplots()
+    
     # fig8, ax8 = plt.subplots()
 
     # point_number = 5000
@@ -834,9 +902,6 @@ if __name__ == "__main__":
     # ax6.plot(time_list[::100], energy_list[::100])
     # ax6.set_xlabel("Time")
     # ax6.set_ylabel("Energy")
-    ax7.plot(time_list, radius_list)
-    ax7.set_xlabel("Time")
-    ax7.set_ylabel("Radius")
     # ax8.plot(time_list[::100], angular_momentum_list[::100])
     # ax8.set_xlabel("Time")
     # ax8.set_ylabel("Angular Momentum")

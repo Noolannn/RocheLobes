@@ -2,15 +2,15 @@ use std::{fs::File, io::Write, time::Instant};
 
 const DBG: bool = true;
 
-const G: f64 = 0.1;
+const G: f64 = 1.0;
 const EPSILON: f64 = 0.01;
 
-const M: f64 = 10.0;
+const M: f64 = 1.0;
 const Q: f64 = 2.0;
-const A: f64 = 4.0;
-const OMEGA: f64 = 0.1;
+const A: f64 = 1.0;
+const OMEGA: f64 = 1.0;
 const SIZE: f64 = 8.0;
-const GAMMA: f64 = 0.01 * OMEGA;
+const GAMMA: f64 = 0.00 * OMEGA;
 
 
 const M1: f64 = M/(1.0 + Q);
@@ -135,9 +135,9 @@ fn test_particule_rk4_adaptative(x0: f64, y0: f64, vx0: f64, vy0: f64, step: usi
 }
 
 fn main() {
-    let x_l1 = 0.9706573406008301;
-    let (pos_list, jacobi_cst, radius_list, time_list) = test_particule_rk4_adaptative(x_l1, - 0.001 * A, 0.0, 0.0, 1000000000, 0.01, 10000000);
-    let mut file = File::create("pos.txt").unwrap();
+    let x_l1 = 0.2374501905968229;
+    let (pos_list, jacobi_cst, radius_list, time_list) = test_particule_rk4_adaptative(x_l1, - 0.001 * A, 0.0, 0.0, 1000000, 0.01, 100000);
+    let mut file = File::create("L1_trajectory.txt").unwrap();
     let mut content = String::new();
     // let sample_size = 100000;
     // let step = pos_list.len()/sample_size;
