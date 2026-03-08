@@ -3,4 +3,7 @@
 
 # Added by cargo
 
-/target
+/target/*
+./pos.txt
+./trajectory.txt
+*.txt

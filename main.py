@@ -22,6 +22,7 @@ M = 10
 q = 2
 a = 4
 Omega = 0.1 # 0.1
+gamma = 0.01 * Omega
 
 # Constraint physical parameters
 M1 = M/(1 + q)
@@ -109,6 +110,30 @@ def read_pos_from_file(file):
             pos_list.append((x, y))
 
     return pos_list
+
+def read_from_file(file):
+    pos_list = []
+    jacobi_list = []
+    radius_list = []
+    time_list = []
+    x_list = []
+    y_list = []
+    with open(file) as f:
+        for line in f.readlines():
+            split_line = line.split(" ")
+            x = float(split_line[0])
+            y = float(split_line[1])
+            jacobi = float(split_line[2])
+            radius = float(split_line[3])
+            time = float(split_line[4])
+            pos_list.append((x, y))
+            jacobi_list.append(jacobi)
+            radius_list.append(radius)
+            time_list.append(time)
+            x_list.append(x)
+            y_list.append(y)
+
+    return pos_list, jacobi_list, radius_list, time_list, x_list, y_list
 
 def test_particule_euler(x0, y0, vx0, vy0, duration, dt):
     """
@@ -277,6 +302,243 @@ def simulate_flux(n0, x_L1, v, noise, time, dt_real, dt0, reinject = False):
     return particles
 
 
+def acc_x(x, y, vx, vy):
+    rel_x = (x - a1)
+    rel_y = y
+    r = (rel_x, rel_y)
+    v = (vx, vy)
+    r_norm = np.hypot(rel_x, rel_y)
+    r_normalized = r/r_norm
+    v_rad = np.dot(v, r_normalized)
+    a_diss = - gamma * v_rad * r_normalized
+    return grad_roche_x(x, y) + 2 * Omega * vy + a_diss[0]
+
+def acc_y(x, y, vx, vy):
+    rel_x = (x - a1)
+    rel_y = y
+    r = (rel_x, rel_y)
+    v = (vx, vy)
+    r_norm = np.hypot(rel_x, rel_y)
+    r_normalized = r/r_norm
+    v_rad = np.dot(v, r_normalized)
+    a_diss = - gamma * v_rad * r_normalized
+    return grad_roche_y(x, y) - 2 * Omega * vx + a_diss[1]
+
+def acc(x, y, vx, vy):
+    rel_x = (x - a1)
+    rel_y = y
+    r = np.array([rel_x, rel_y])
+    v_rel_x = vx # + Omega * rel_y
+    v_rel_y = vy # - Omega * rel_x
+    v_rel = np.array([v_rel_x, v_rel_y])
+    r_norm = np.sqrt(rel_x**2 + rel_y**2 + epsilon**2)
+    r_normalized = r/r_norm
+    v_rad = np.dot(v_rel, r_normalized)
+    a_diss = - gamma * v_rad * r_normalized
+    return (grad_roche_x(x, y) + 2 * Omega * vy + a_diss[0], grad_roche_y(x, y) - 2 * Omega * vx + a_diss[1])
+
+def test_particule_RK4_adaptative_collision(x0, y0, vx0, vy0, step, dt0, loss = False):
+    start = time.time()
+    """
+    Uses RK4 method (Runge-Kutta order 4) to compute the trajectory of a particule.
+    It is more accurate than Euler method.
+    The timestep is adaptative (can be smaller or greater than dt0 when the simulation requires it)
+    
+    :param x0: Starting position x
+    :param y0: Starting position y
+    :param vx0: Starting velocity vx
+    :param vy0: Starting velocity vy
+    :param step: Number of simulation step. Because the timestep is adaptative, it is not equivalent to duration/dt for other methods
+    :param dt0: Base timestep, which will be adapted based on the particule velocity
+    :returns: Position list along the trajectory and Jacobi constant (which should be conserved along the trajectory)
+    """
+    first_rel_pos = (0.0, 0.0)
+    first_velocity = (0.0, 0.0)
+    first_pos = (0.0, 0.0)
+    
+    first_collision = False
+    abs_e_loss = 1/1.0001
+    alpha = 0.01
+
+    total_time = 0
+    x = x0
+    y = y0
+    vx = vx0
+    vy = vy0
+    norm0 = np.sqrt(vx0**2 + vy0**2 + epsilon**2)
+    norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
+    position_list = [(x0, y0)]
+    jacobi_cst = [(-2) * float(roche_potential(x, y)) - (vx**2 + vy**2)]
+    colors = [(0, 0, 1)]
+    energy_list = [(0.5 * (vx**2 + vy**2))]
+    rel_x = (x - a1)
+    rel_y = y
+    r_norm = np.hypot(rel_x, rel_y)
+    radius_list = [r_norm]
+    time_list = [total_time]
+    angular_momentum = rel_x * vy - rel_y * vx
+    angular_momentum_list = [angular_momentum]
+    colors = [(0, 0, 1)]
+    for current_step in range(0, step):
+        dt = dt0 * (norm0/norm)
+        scale = 1
+        if norm/norm0 < 1:
+            scale = norm/norm0
+        e_loss = abs_e_loss * scale
+
+        rel_x = (x - a1)
+        rel_y = y
+        r = (rel_x, rel_y)
+        v = (vx, vy)
+        r_norm = np.hypot(rel_x, rel_y)
+        r_normalized = r/r_norm
+        v_rad = np.dot(v, r_normalized)
+        a_diss = - gamma * v_rad * r_normalized
+
+        # k1x = grad_roche_x(x, y) + 2 * Omega * vy
+        # k1y = grad_roche_y(x, y) - 2 * Omega * vx
+        # k2x = grad_roche_x(x + (dt/2) * vx, y + (dt/2) * vy) + 2 * Omega * (vy + (dt/2) * k1y)
+        # k2y = grad_roche_y(x + (dt/2) * vx, y + (dt/2) * vy) - 2 * Omega * (vx + (dt/2) * k1x)
+        # k3x = grad_roche_x(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) + 2 * Omega * (vy + (dt/2) * k2y)
+        # k3y = grad_roche_y(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) - 2 * Omega * (vx + (dt/2) * k2x)
+        # k4x = grad_roche_x(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) + 2 * Omega * (vy + dt * k3y)
+        # k4y = grad_roche_y(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) - 2 * Omega * (vx + dt * k3x)
+
+        k1 = acc(x, y, vx, vy)
+        k1x = k1[0]
+        k1y = k1[1]
+        k2 = acc(x + (dt/2) * vx, y + (dt/2) * vy, vx + (dt/2) * k1x, vy + (dt/2) * k1y)
+        k2x = k2[0]
+        k2y = k2[1]
+        k3 = acc(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y, vx + (dt/2) * k2x, vy + (dt/2) * k2y)
+        k3x = k3[0]
+        k3y = k3[1]
+        k4 = acc(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y, vx + dt * k3x, vy + dt * k3y)
+        k4x = k4[0]
+        k4y = k4[1]
+
+        x = x + dt * vx + ((dt**2)/6) * (k1x + k2x + k3x)
+        y = y + dt * vy + ((dt**2)/6) * (k1y + k2y + k3y)
+        vx = vx + (dt/6) * (k1x + 2 * k2x + 2 * k3x + k4x)
+        vy = vy + (dt/6) * (k1y + 2 * k2y + 2 * k3y + k4y)
+        norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
+
+        # print("x = " + str(x) + " y = " + str(y))
+        if np.sqrt(x**2 + y**2) > size:
+            if dbg: print("Distance is too large, stop")
+            break
+
+        angular_momentum = rel_x * vy - rel_y * vx
+
+        total_time += dt
+        position_list.append((x, y))
+        jacobi_cst.append((-2) * float(roche_potential(x, y)) - (vx**2 + vy**2))
+        energy_list.append((0.5 * (vx**2 + vy**2)))
+        radius_list.append(r_norm)
+        time_list.append(total_time)
+        angular_momentum_list.append(angular_momentum)
+        colors.append(((1 * (current_step/step)), 0, (step - current_step)/step))
+    
+    end = time.time()
+    if dbg: print("Elapsed time : " + str(end - start) + "s")
+    return position_list, jacobi_cst, energy_list, radius_list, angular_momentum_list, time_list, colors
+
+
+def test_particule_RK4_adaptative2(x0, y0, vx0, vy0, step, dt0, loss = False):
+    start = time.time()
+    """
+    Uses RK4 method (Runge-Kutta order 4) to compute the trajectory of a particule.
+    It is more accurate than Euler method.
+    The timestep is adaptative (can be smaller or greater than dt0 when the simulation requires it)
+    
+    :param x0: Starting position x
+    :param y0: Starting position y
+    :param vx0: Starting velocity vx
+    :param vy0: Starting velocity vy
+    :param step: Number of simulation step. Because the timestep is adaptative, it is not equivalent to duration/dt for other methods
+    :param dt0: Base timestep, which will be adapted based on the particule velocity
+    :returns: Position list along the trajectory and Jacobi constant (which should be conserved along the trajectory)
+    """
+
+    loss_coef = 1/100
+
+    total_time = 0
+    x = x0
+    y = y0
+    vx = vx0
+    vy = vy0
+    norm0 = np.sqrt(vx0**2 + vy0**2 + epsilon**2)
+    norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
+    position_list = [(x0, y0)]
+    jacobi_cst = [(-2) * float(roche_potential(x, y)) - (vx**2 + vy**2)]
+
+    energy_list = [(0.5 * (vx**2 + vy**2))]
+    rel_x = (x - a1)
+    rel_y = y
+
+    r_norm = np.hypot(rel_x, rel_y)
+    radius_list = [r_norm]
+    time_list = [total_time]
+    angular_momentum = rel_x * vy - rel_y * vx
+    angular_momentum_list = [angular_momentum]
+    colors = [(0, 0, 1)]
+    for current_step in range(0, step):
+
+        dt = dt0 * (norm0/norm)
+        scale = 1
+        if norm/norm0 < 1:
+            scale = norm/norm0
+        k1x = grad_roche_x(x, y) + 2 * Omega * vy
+        k1y = grad_roche_y(x, y) - 2 * Omega * vx
+        k2x = grad_roche_x(x + (dt/2) * vx, y + (dt/2) * vy) + 2 * Omega * (vy + (dt/2) * k1y)
+        k2y = grad_roche_y(x + (dt/2) * vx, y + (dt/2) * vy) - 2 * Omega * (vx + (dt/2) * k1x)
+        k3x = grad_roche_x(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) + 2 * Omega * (vy + (dt/2) * k2y)
+        k3y = grad_roche_y(x + (dt/2) * vx + ((dt**2)/4) * k1x, y + (dt/2) * vy + ((dt**2)/4) * k1y) - 2 * Omega * (vx + (dt/2) * k2x)
+        k4x = grad_roche_x(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) + 2 * Omega * (vy + dt * k3y)
+        k4y = grad_roche_y(x + dt * vx + ((dt**2)/2) * k2x, y + dt * vy + ((dt**2)/2) * k2y) - 2 * Omega * (vx + dt * k3x)
+
+        x = x + dt * vx + ((dt**2)/6) * (k1x + k2x + k3x)
+        y = y + dt * vy + ((dt**2)/6) * (k1y + k2y + k3y)
+        vx = vx + (dt/6) * (k1x + 2 * k2x + 2 * k3x + k4x)
+        vy = vy + (dt/6) * (k1y + 2 * k2y + 2 * k3y + k4y)
+        norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
+
+        rel_x = (x - a1)
+        rel_y = y
+        if loss:
+            r_vec = np.array([rel_x, rel_y])
+            r_norm = np.hypot(rel_x, rel_y)
+            r_normalized = r_vec/r_norm
+            v = np.array([vx, vy])
+            v_rad_proj = float(np.dot(v, r_normalized))
+            v_rad = v_rad_proj * r_vec # Radial velocity vector
+            v_tang = v - v_rad # Tangential velocity vector
+
+            new_v_rad = v_rad * (1 - loss_coef * dt)
+            new_v = new_v_rad + v_tang
+
+            vx = new_v[0]
+            vy = new_v[1]
+
+        # print("x = " + str(x) + " y = " + str(y))
+        if np.sqrt(x**2 + y**2) > size:
+            if dbg: print("Distance is too large, stop")
+            break
+
+        total_time += dt
+        position_list.append((x, y))
+        jacobi_cst.append((-2) * float(roche_potential(x, y)) - (vx**2 + vy**2))
+        energy_list.append((0.5 * (vx**2 + vy**2)))
+        radius_list.append(r_norm)
+        time_list.append(total_time)
+        angular_momentum = rel_x * vy - rel_y * vx
+        angular_momentum_list.append(angular_momentum)
+        colors.append(((1 * (current_step/step)), 0, (step - current_step)/step))
+    
+    end = time.time()
+    if dbg: print("Elapsed time : " + str(end - start) + "s")
+    return position_list, jacobi_cst, energy_list, radius_list, angular_momentum_list, time_list, colors
+
 
 def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0, loss = False):
     start = time.time()
@@ -293,8 +555,15 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0, loss = False):
     :param dt0: Base timestep, which will be adapted based on the particule velocity
     :returns: Position list along the trajectory and Jacobi constant (which should be conserved along the trajectory)
     """
+    first_rel_pos = (0.0, 0.0)
+    first_velocity = (0.0, 0.0)
+    first_pos = (0.0, 0.0)
+    
     first_collision = False
     abs_e_loss = 1/1.0001
+    alpha = 0.01
+
+
     total_time = 0
     x = x0
     y = y0
@@ -304,6 +573,15 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0, loss = False):
     norm = np.sqrt(vx**2 + vy**2 + epsilon**2)
     position_list = [(x0, y0)]
     jacobi_cst = [(-2) * float(roche_potential(x, y)) - (vx**2 + vy**2)]
+    colors = [(0, 0, 1)]
+    energy_list = [(0.5 * (vx**2 + vy**2))]
+    rel_x = (x - a1)
+    rel_y = y
+    r_norm = np.hypot(rel_x, rel_y)
+    radius_list = [r_norm]
+    time_list = [total_time]
+    angular_momentum = rel_x * vy - rel_y * vx
+    angular_momentum_list = [angular_momentum]
     for current_step in range(0, step):
         dt = dt0 * (norm0/norm)
         scale = 1
@@ -331,93 +609,73 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0, loss = False):
         rel_y = y
         rel_norm = np.sqrt(rel_x**2 + rel_y**2)
 
-        if loss and v_norm > epsilon and rel_norm > epsilon:
-            v_theta = np.atan2(vx, vy)
-            rel_theta = np.atan2(rel_x, rel_y)
-            theta = rel_theta - v_theta
-            A = (1 + (rel_x**2)/(rel_y**2))
-            B = ((2 * rel_x)/(rel_y**2)) * (rel_y * vx - rel_x * vy)
-            C = (1/rel_y**2) * ((rel_y * vx - rel_x * vy)**2) - (e_loss**2) * (vx**2 + vy**2)
-            Delta = (B**2) - 4 * A * C
-            if Delta > epsilon: # Else no solution
-                sqrt_delta = np.sqrt(Delta)
-                new_vy_1 = (- B - sqrt_delta)/(2 * A)
-                new_vy_2 = (- B + sqrt_delta)/(2 * A)
-                new_vx_1 = (1/rel_y) * (rel_x * new_vy_1 - x * vy + y * vx)
-                new_vx_2 = (1/rel_y) * (rel_x * new_vy_2 - x * vy + y * vx)
-                v1 = (new_vx_1, new_vy_1)
-                v2 = (new_vx_1, new_vy_2)
-                v3 = (new_vx_2, new_vy_1)
-                v4 = (new_vx_2, new_vy_2)
-                normalized_v1 = v1/np.hypot(new_vx_1, new_vy_1)
-                normalized_v2 = v2/np.hypot(new_vx_1, new_vy_2)
-                normalized_v3 = v3/np.hypot(new_vx_2, new_vy_1)
-                normalized_v4 = v4/np.hypot(new_vx_2, new_vy_2)
-                normalized_v = (vx, vy)/np.hypot(vx, vy)
-                v = (vx, vy)
-                dots = [np.dot(normalized_v, normalized_v1), np.dot(normalized_v, normalized_v2), np.dot(normalized_v, normalized_v3), np.dot(normalized_v, normalized_v4)]
-                max = -1.0
-                index = 0
-                for i in range(0, 4):
-                    if dots[i] > max:
-                        max = dots[i]
-                        index = i
-                old_vx = vx
-                old_vy = vy
-                match index:
-                    case 0:
-                        vx = v1[0]
-                        vy = v1[1]
-                    case 1:
-                        vx = v2[0]
-                        vy = v2[1]
-                    case 2:
-                        vx = v3[0]
-                        vy = v3[1]
-                    case 3:
-                        vx = v4[0]
-                        vy = v4[1]
-                if first_collision == False:
-                    first_collision = True
-                    print("Max dot : " + str(max))
-                    print("Old vx : " + str(old_vx) + " old vy : " + str(old_vy))
-                    print("New vx : " + str(vx) + " new vy : " + str(vy))
-                    print("Current step : " + str(current_step))
-                    print("dots : " + str(dots))
-                    print("v1 : " + str(v1))
-                    print("normalized v1 : " + str(normalized_v1))
+        norm_threshold = epsilon
+        norm_threshold = 1e-12
 
+        angle_threshold = epsilon
+        angle_threshold = 1e-12
 
-        # Turned off for now
-        if False and v_norm > epsilon and rel_norm > epsilon: # If v_norm is too small, we can't perform the operation
-            v_theta = np.atan2(vx, vy)
-            rel_theta = np.atan2(rel_x, rel_y)
-            theta = rel_theta - v_theta
-            angular_momentum = rel_norm * v_norm * np.sin(theta)
-            angular_momentum2 = (x - a1) * vy - y * vx
-            dotprod = np.dot((rel_x, rel_y)/rel_norm, (vx, vy)/v_norm)
-            theta = np.acos(dotprod)
-            if abs((1/e_loss) * np.sin(theta)) < 1.0 - epsilon: # Else orbit is too circular
+        if loss and v_norm > norm_threshold and rel_norm > norm_threshold:
+            v = (vx, vy)
+            new_v_norm = (1 - alpha * dt) * v_norm
+            v_theta = np.atan2(vy, vx)
+            rel_theta = np.atan2(rel_y, rel_x)
+            theta = (rel_theta - v_theta) % (np.pi/2.0) # Always the direct angle from v to -rel
+            angular_momentum_norm = abs(rel_norm * v_norm * np.sin(theta))
+            if abs((1/e_loss) * np.sin(theta)) < 1.0 - angle_threshold: # Else orbit is too circular
                 new_v_norm = e_loss * v_norm
                 new_theta = np.asin((1/e_loss) * np.sin(theta))
-                print("Theta : " + str(theta))
-                print("New theta : " + str(new_theta))
-                print("np.sin(theta) * np.sin(new_theta) = " + str(np.sin(theta) * np.sin(new_theta)))
-                new_angular_momentum = rel_norm * new_v_norm * np.sin(new_theta)
-                print("Angular momentum : " + str(angular_momentum) + " new angular momentum : " + str(new_angular_momentum))
-                print("Velocity norm : " + str(v_norm) + " new velocity norm : " + str(new_v_norm))
-                print("ratio : " + str(np.exp(-dt0/(5 *dt))))
-                new_v_theta = rel_theta - new_theta
-                if abs((v_theta - new_v_theta) % (2 * np.pi)) > 0.1:
-                    new_v_theta += np.pi
-                    if abs((v_theta - new_v_theta) % (2 * np.pi)) > 0.1:
-                        print("Can't keep up with the angle difference")
-                print("Difference in angle : " + str((v_theta - new_v_theta) % 6.28))
-                rot_angle = (v_theta - new_v_theta) % (2 * np.pi)
-                new_vx = np.cos(rot_angle) * vx - np.sin(rot_angle) * vy
-                new_vy = np.sin(rot_angle) * vx + np.cos(rot_angle) * vy
-                vx = e_loss * new_vx
-                vy = e_loss * new_vy
+                new_theta_list = [new_theta + i * (np.pi/2) for i in range(0, 4)]
+                new_v_theta_list = [rel_theta - new_t for new_t in new_theta_list]
+                new_v_list = [(new_v_norm * np.cos(new_v_theta), new_v_norm * np.sin(new_v_theta)) for new_v_theta in new_v_theta_list]
+                max_dot = np.dot(new_v_list[0], v)
+                index = 0
+                for i in range(0, 4):
+                    dot = np.dot(new_v_list[i], v)
+                    if dot > max_dot:
+                        max_dot = dot
+                        index = i
+                new_v_theta = rel_theta - new_theta_list[index]
+                new_v = new_v_list[index]
+                vx = new_v[0]
+                vy = new_v[1]
+                colors.append((1, 0, 0))
+            else:
+                colors.append((0, 0, 1))
+        else:
+            colors.append((0, 0, 1))
+
+
+
+        if False and loss and v_norm > norm_threshold and rel_norm > norm_threshold:
+            v = (vx, vy)
+            new_v_norm = e_loss * v_norm
+            v_theta = np.atan2(vy, vx)
+            rel_theta = np.atan2(rel_y, rel_x)
+            theta = (rel_theta - v_theta) % (np.pi/2.0) # Always the direct angle from v to -rel
+            angular_momentum_norm = abs(rel_norm * v_norm * np.sin(theta))
+            if abs((1/e_loss) * np.sin(theta)) < 1.0 - angle_threshold: # Else orbit is too circular
+                new_v_norm = e_loss * v_norm
+                new_theta = np.asin((1/e_loss) * np.sin(theta))
+                new_theta_list = [new_theta + i * (np.pi/2) for i in range(0, 4)]
+                new_v_theta_list = [rel_theta - new_t for new_t in new_theta_list]
+                new_v_list = [(new_v_norm * np.cos(new_v_theta), new_v_norm * np.sin(new_v_theta)) for new_v_theta in new_v_theta_list]
+                max_dot = np.dot(new_v_list[0], v)
+                index = 0
+                for i in range(0, 4):
+                    dot = np.dot(new_v_list[i], v)
+                    if dot > max_dot:
+                        max_dot = dot
+                        index = i
+                new_v_theta = rel_theta - new_theta_list[index]
+                new_v = new_v_list[index]
+                vx = new_v[0]
+                vy = new_v[1]
+                colors.append((1, 0, 0))
+            else:
+                colors.append((0, 0, 1))
+        else:
+            colors.append((0, 0, 1))
 
         # print("x = " + str(x) + " y = " + str(y))
         if np.sqrt(x**2 + y**2) > size:
@@ -427,10 +685,18 @@ def test_particule_RK4_adaptative(x0, y0, vx0, vy0, step, dt0, loss = False):
         total_time += dt
         position_list.append((x, y))
         jacobi_cst.append((-2) * float(roche_potential(x, y)) - (vx**2 + vy**2))
+        energy_list.append((0.5 * (vx**2 + vy**2)))
+        r_norm = np.hypot(rel_x, rel_y)
+        radius_list.append(r_norm)
+        time_list.append(total_time)
+        angular_momentum = rel_x * vy - rel_y * vx
+        angular_momentum_list.append(angular_momentum)
     
     end = time.time()
     if dbg: print("Elapsed time : " + str(end - start) + "s")
-    return position_list, jacobi_cst
+    return position_list, jacobi_cst, energy_list, radius_list, angular_momentum_list, time_list
+
+
 
 def roche_potential_expansion_L1(x_L1, X, Y, Z=0):
     PhiRocheL1 = roche_potential(x_L1, 0)
@@ -529,23 +795,55 @@ if __name__ == "__main__":
     ax.set_title("Roche equipotentials for M=" + str(M) + ", q=" + str(q))
 
     # Generate trajectory
-    # pos_list, jacobi_cst = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 1000000, 0.01)
+    # pos_list, jacobi_cst, first_rel_pos, first_velocity, first_pos, colors = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 94900, 0.01)
     # print("min = " + str(min(jacobi_cst)) + " max = " + str(max(jacobi_cst)))
-    pos_list2, jacobi_cst2 = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 949, 0.01, True)
-    print("min = " + str(min(jacobi_cst2)) + " max = " + str(max(jacobi_cst2)))
+    
+    # pos_list2, jacobi_cst2, energy_list, radius_list, angular_momentum_list, time_list, colors = test_particule_RK4_adaptative_collision(x_L1, y_L1 - 0.001 * a, 0, 0, 949000, 0.01, True)
+    # print("min = " + str(min(jacobi_cst2)) + " max = " + str(max(jacobi_cst2)))
+
+    # print("Rel pos : " + str(first_rel_pos))
+    # ax.quiver(a1, 0.0, first_rel_pos[0], first_rel_pos[1], angles='xy', scale_units='xy', scale=1.0)
+    # ax.quiver(first_pos[0], first_pos[1], first_velocity[0], first_velocity[1], angles='xy', scale_units='xy', scale=1.0)
 
 
-    # pos_list = read_pos_from_file("pos.txt") # Read trajectory generated from the Rust code
+    pos_list, jacobi_list, radius_list, time_list, x_list, y_list = read_from_file("pos.txt") # Read trajectory generated from the Rust code
+    print("min = " + str(min(jacobi_list)) + " max = " + str(max(jacobi_list)))
+
+    # for i in range(0, len(pos_list)):
+    #     xp, yp = pos_list[i]
+    #     ax.scatter(xp, yp, s=5, marker=".", c=[((1 * (i/len(pos_list))), 0, (len(pos_list) - i)/len(pos_list))])
 
     # point_number = 5000
     # step = int((len(pos_list) - 1)/point_number)
     # for i in range(0, point_number + 1):
     #     xp, yp = pos_list[i * step]
-    #     ax.scatter(xp, yp, s=5, marker=".", c=[(1, 0, 0)])
+    #     ax.scatter(xp, yp, s=1, marker=".", edgecolors='none', rasterized=True, c=[((1 * (i/(point_number + 1))), 0, (point_number + 1 - i)/(point_number + 1))])
 
-    for i in range(0, len(pos_list2)):
-        xp, yp = pos_list2[i]
-        ax.scatter(xp, yp, s=5, marker=".", c=[(0, 0, 1)])
+    ax.scatter(x_list, y_list, s=4, marker=".", edgecolors='none', rasterized=True, c=time_list, cmap="plasma")
+
+    # fig6, ax6 = plt.subplots()
+    fig7, ax7 = plt.subplots()
+    # fig8, ax8 = plt.subplots()
+
+    # point_number = 5000
+    # step = int((len(pos_list2) - 1)/point_number)
+    # for i in range(0, point_number + 1):
+    #     xp, yp = pos_list2[i * step]
+    #     ax.scatter(xp, yp, s=5, marker=".", c=[colors[i * step]])
+
+    # ax6.plot(time_list[::100], energy_list[::100])
+    # ax6.set_xlabel("Time")
+    # ax6.set_ylabel("Energy")
+    ax7.plot(time_list, radius_list)
+    ax7.set_xlabel("Time")
+    ax7.set_ylabel("Radius")
+    # ax8.plot(time_list[::100], angular_momentum_list[::100])
+    # ax8.set_xlabel("Time")
+    # ax8.set_ylabel("Angular Momentum")
+
+    # for i in range(0, len(pos_list2)):
+    #     xp, yp = pos_list2[i]
+    #     ax.scatter(xp, yp, s=5, marker=".", c=[(1, 0, 0)])
 
     fig5, ax5 = plt.subplots()
     ax5.set_xlabel("y")
