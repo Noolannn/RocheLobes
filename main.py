@@ -19,7 +19,7 @@ size = 8.0
 
 # Physical parameters
 M = 1
-q = 2
+q = 0.25
 a = 1
 Omega = np.sqrt(G*M/a**3) # 0.1
 gamma = 0.01 * Omega
@@ -110,6 +110,26 @@ def read_pos_from_file(file):
             pos_list.append((x, y))
 
     return pos_list
+
+def read_multiple_particles(file):
+    particles_x_list = []
+    particles_y_list = []
+    with open(file) as f:
+        lines = f.readlines()
+        x_list = []
+        y_list = []
+        for t in range(0, len(lines.split(" ")[0])):
+            for i in range(0, len(lines)):
+                split_line = lines[i].split(" ")
+                x_list.append(lines[i])
+
+        for line in f.readlines():
+            split_line = line.split(" ")
+            
+            for i in range(0, len(split_line)):
+                ...
+
+
 
 def read_from_file(file):
     pos_list = []
@@ -855,7 +875,7 @@ if __name__ == "__main__":
 
     fig0, ax0 = plt.subplots()
 
-    # plot_2D_Roche_equipotentials_xyplane([(x_L1, y_L1), (x_L2, y_L2), (x_L3, y_L3), (x_L4, y_L4), (x_L5, y_L5)])
+    fig0, ax0 = plot_2D_Roche_equipotentials_xyplane([(x_L1, y_L1), (x_L2, y_L2), (x_L3, y_L3), (x_L4, y_L4), (x_L5, y_L5)])
 
     # Generate trajectory
     # pos_list, jacobi_cst, first_rel_pos, first_velocity, first_pos, colors = test_particule_RK4_adaptative(x_L1, y_L1 - 0.001 * a, 0, 0, 94900, 0.01)
@@ -869,13 +889,13 @@ if __name__ == "__main__":
     # ax.quiver(first_pos[0], first_pos[1], first_velocity[0], first_velocity[1], angles='xy', scale_units='xy', scale=1.0)
 
 
-    # pos_list, jacobi_list, radius_list, time_list, x_list, y_list = read_from_file("L1_trajectory.txt") # Read trajectory generated from the Rust code
-    # print("min = " + str(min(jacobi_list)) + " max = " + str(max(jacobi_list)))
-    # ax.scatter(x_list, y_list, s=4, marker=".", edgecolors='none', rasterized=True, c=time_list, cmap="plasma")
-    # fig7, ax7 = plt.subplots()
-    # ax7.plot(time_list, radius_list)
-    # ax7.set_xlabel("Time")
-    # ax7.set_ylabel("Radius")
+    pos_list, jacobi_list, radius_list, time_list, x_list, y_list = read_from_file("L1_trajectory.txt") # Read trajectory generated from the Rust code
+    print("min = " + str(min(jacobi_list)) + " max = " + str(max(jacobi_list)))
+    ax0.scatter(x_list, y_list, s=4, marker=".", edgecolors='none', rasterized=True, c=time_list, cmap="plasma")
+    fig7, ax7 = plt.subplots()
+    ax7.plot(time_list, radius_list)
+    ax7.set_xlabel("Time")
+    ax7.set_ylabel("Radius")
 
 
     # for i in range(0, len(pos_list)):

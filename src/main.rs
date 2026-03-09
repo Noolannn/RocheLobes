@@ -1,16 +1,18 @@
 use std::{fs::File, io::Write, time::Instant};
 
+use rand::random_range;
+
 const DBG: bool = true;
 
 const G: f64 = 1.0;
 const EPSILON: f64 = 0.01;
 
 const M: f64 = 1.0;
-const Q: f64 = 2.0;
+const Q: f64 = 0.25;
 const A: f64 = 1.0;
 const OMEGA: f64 = 1.0;
 const SIZE: f64 = 8.0;
-const GAMMA: f64 = 0.00 * OMEGA;
+const GAMMA: f64 = 0.01 * OMEGA;
 
 
 const M1: f64 = M/(1.0 + Q);
@@ -135,8 +137,8 @@ fn test_particule_rk4_adaptative(x0: f64, y0: f64, vx0: f64, vy0: f64, step: usi
 }
 
 fn main() {
-    let x_l1 = 0.2374501905968229;
-    let (pos_list, jacobi_cst, radius_list, time_list) = test_particule_rk4_adaptative(x_l1, - 0.001 * A, 0.0, 0.0, 1000000, 0.01, 100000);
+    let x_l1 = -0.43814165075855444;
+    let (pos_list, jacobi_cst, radius_list, time_list) = test_particule_rk4_adaptative(x_l1, - 0.001 * A, 0.0, 0.0, 10000000, 0.01, 100000);
     let mut file = File::create("L1_trajectory.txt").unwrap();
     let mut content = String::new();
     // let sample_size = 100000;
@@ -157,4 +159,20 @@ fn main() {
         content.push_str(&format!("{} {} {} {} {}\n", pos.0, pos.1, jacobi, radius, time));
     }
     file.write_all(content.as_bytes()).unwrap();
+
+    // let mut file = File::create("1000_particles_trajectory.txt").unwrap();
+    // let mut content = String::new();
+    // for _ in 0..1000 {
+    //     let costheta: f64 = random_range(0.0..1.0);
+    //     let vx = 0.01 * costheta;
+    //     let vy = 0.01 * (1.0 - costheta.powi(2)).sqrt();
+    //     let (pos_list, jacobi_cst, radius_list, time_list) = test_particule_rk4_adaptative(x_l1, - 0.001 * A, vx, vy, 10000000, 0.01, 1000);
+    //     for j in 0..pos_list.len() {
+    //         let pos = pos_list[j];
+    //         content.push_str(&format!("{} {} ", pos.0, pos.1));
+    //     }
+    //     content.push_str("\n");
+    // }
+    // file.write_all(content.as_bytes()).unwrap();
+
 }
